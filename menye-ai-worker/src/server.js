@@ -2,7 +2,7 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 const cloudbase = require('@cloudbase/node-sdk');
-const OpenAI = require('openai');
+const openaiModule = require('openai');
 
 const ENV_ID = process.env.CLOUDBASE_ENV_ID;
 const SECRET_ID = process.env.CLOUDBASE_SECRET_ID;
@@ -13,25 +13,41 @@ const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || '';
 const WORKER_SHARED_SECRET = process.env.WORKER_SHARED_SECRET;
 const PORT = Number(process.env.PORT || 3000);
 
-if (!ENV_ID || !SECRET_ID || !SECRET_KEY || !OPENAI_API_KEY || !WORKER_SHARED_SECRET) {
-  throw new Error('缺少必要环境变量');
+const requiredEnvMap = {
+  CLOUDBASE_ENV_ID: ENV_ID,
+  CLOUDBASE_SECRET_ID: SECRET_ID,
+  CLOUDBASE_SECRET_KEY: SECRET_KEY,
+  OPENAI_API_KEY,
+  WORKER_SHARED_SECRET
+};
+
+function getMissingEnvKeys() {
+  return Object.keys(requiredEnvMap).filter((key) => !requiredEnvMap[key]);
 }
 
-const app = cloudbase.init({
+const missingEnvKeys = getMissingEnvKeys();
+const isConfigured = missingEnvKeys.length === 0;
+
+const app = isConfigured ? cloudbase.init({
   env: ENV_ID,
   secretId: SECRET_ID,
   secretKey: SECRET_KEY
-});
+}) : null;
 
-const db = app.database();
-const collection = db.collection('ai_jobs');
-const openaiModule = require('openai');
-const OpenAIClient = openaiModule.default || OpenAI;
+const db = app ? app.database() : null;
+const collection = db ? db.collection('ai_jobs') : null;
+const OpenAIClient = openaiModule.default || openaiModule;
 const toFile = openaiModule.toFile;
-const openai = new OpenAIClient({
+const openai = isConfigured ? new OpenAIClient({
   apiKey: OPENAI_API_KEY,
   ...(OPENAI_BASE_URL ? { baseURL: OPENAI_BASE_URL } : {})
-});
+}) : null;
+
+function assertConfigured() {
+  if (!isConfigured) {
+    throw new Error(`缺少环境变量：${missingEnvKeys.join(', ')}`);
+  }
+}
 
 function signPayload(jobId, timestamp, secret) {
   return crypto
@@ -42,7 +58,7 @@ function signPayload(jobId, timestamp, secret) {
 
 function verifySignature(body) {
   const { jobId, timestamp, signature } = body || {};
-  if (!jobId || !timestamp || !signature) {
+  if (!jobId || !timestamp || !signature || !WORKER_SHARED_SECRET) {
     return false;
   }
   return signPayload(jobId, timestamp, WORKER_SHARED_SECRET) === signature;
@@ -159,6 +175,8 @@ async function readImageResponseBody(response) {
 }
 
 async function processJob(jobId) {
+  assertConfigured();
+
   const job = await getJob(jobId);
   if (!job) {
     throw new Error('未找到任务');
@@ -226,12 +244,24 @@ function readRequestBody(req) {
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
-    sendJson(res, 200, { success: true });
+    sendJson(res, 200, {
+      success: true,
+      configured: isConfigured,
+      missingEnvKeys
+    });
     return;
   }
 
   if (req.method === 'POST' && req.url === '/jobs/process') {
     try {
+      if (!isConfigured) {
+        sendJson(res, 500, {
+          success: false,
+          errorMessage: `缺少环境变量：${missingEnvKeys.join(', ')}`
+        });
+        return;
+      }
+
       const body = await readRequestBody(req);
       if (!verifySignature(body)) {
         sendJson(res, 401, { success: false, errorMessage: '签名无效' });
@@ -268,4 +298,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`menye-ai-worker listening on ${PORT}`);
+  if (!isConfigured) {
+    console.warn(`missing env keys: ${missingEnvKeys.join(', ')}`);
+  }
 });
