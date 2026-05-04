@@ -1,0 +1,13 @@
+{
+  "name": "menye-ai-worker",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@cloudbase/node-sdk": "latest",
+    "openai": "latest"
+  }
+}
