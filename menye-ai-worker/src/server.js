@@ -176,8 +176,10 @@ async function readImageResponseBody(response) {
 
 async function processJob(jobId) {
   assertConfigured();
+  console.log('[worker] start processJob', jobId);
 
   const job = await getJob(jobId);
+  console.log('[worker] fetched job', jobId, !!job);
   if (!job) {
     throw new Error('未找到任务');
   }
@@ -192,18 +194,24 @@ async function processJob(jobId) {
     errorMessage: '',
     updatedAt: Date.now()
   });
+  console.log('[worker] updated job to processing', jobId);
 
   const sourceBuffer = await downloadOriginalImage(job);
+  console.log('[worker] downloaded source image', jobId, sourceBuffer.length);
   const inputImage = await createInputImage(job, sourceBuffer);
+  console.log('[worker] created input image', jobId);
   const response = await openai.images.edit({
     model: OPENAI_IMAGE_MODEL,
     image: inputImage,
     prompt: buildDoorImageInstruction(job),
     size: '1024x1024'
   });
+  console.log('[worker] received openai response', jobId);
 
   const resultBuffer = await readImageResponseBody(response);
+  console.log('[worker] parsed result buffer', jobId, resultBuffer.length);
   const resultImageFileID = await uploadResult(jobId, job.version || 1, resultBuffer);
+  console.log('[worker] uploaded result image', jobId, resultImageFileID);
   const time = Date.now();
   const nextVersions = (job.versions || []).concat({
     resultImageFileID,
@@ -221,6 +229,7 @@ async function processJob(jobId) {
     updatedAt: time,
     versions: nextVersions
   });
+  console.log('[worker] completed job', jobId);
 }
 
 function sendJson(res, statusCode, body) {
@@ -271,6 +280,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { success: true, accepted: true });
 
       processJob(body.jobId).catch(async (error) => {
+        console.error('[worker] processJob failed:', body.jobId, error);
         try {
           await updateJob(body.jobId, {
             status: 'failed',
