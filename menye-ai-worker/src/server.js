@@ -43,6 +43,18 @@ const openai = isConfigured ? new OpenAIClient({
   ...(OPENAI_BASE_URL ? { baseURL: OPENAI_BASE_URL } : {})
 }) : null;
 
+function getSanitizedBaseUrl(value) {
+  if (!value) {
+    return 'https://api.openai.com/v1';
+  }
+  try {
+    const target = new URL(value);
+    return `${target.protocol}//${target.host}${target.pathname}`;
+  } catch (error) {
+    return value;
+  }
+}
+
 function assertConfigured() {
   if (!isConfigured) {
     throw new Error(`缺少环境变量：${missingEnvKeys.join(', ')}`);
@@ -138,7 +150,7 @@ async function getJob(jobId) {
 }
 
 async function updateJob(jobId, data) {
-  await collection.doc(jobId).update({ data });
+  await collection.doc(jobId).update(data);
 }
 
 async function downloadOriginalImage(job) {
@@ -204,6 +216,11 @@ async function processJob(jobId) {
   console.log('[worker] downloaded source image', jobId, sourceBuffer.length);
   const inputImage = await createInputImage(job, sourceBuffer);
   console.log('[worker] created input image', jobId);
+  console.log('[worker] calling image api', {
+    jobId,
+    baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
+    model: OPENAI_IMAGE_MODEL
+  });
   const response = await openai.images.edit({
     model: OPENAI_IMAGE_MODEL,
     image: inputImage,
