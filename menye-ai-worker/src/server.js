@@ -130,7 +130,11 @@ function downloadRemoteBuffer(url) {
 
 async function getJob(jobId) {
   const detail = await collection.doc(jobId).get();
-  return detail.data || null;
+  const data = detail && detail.data;
+  if (Array.isArray(data)) {
+    return data[0] || null;
+  }
+  return data || null;
 }
 
 async function updateJob(jobId, data) {
@@ -179,7 +183,7 @@ async function processJob(jobId) {
   console.log('[worker] start processJob', jobId);
 
   const job = await getJob(jobId);
-  console.log('[worker] fetched job', jobId, !!job);
+  console.log('[worker] fetched job', jobId, !!job, job ? Object.keys(job) : [], job && job.originalImageFileID);
   if (!job) {
     throw new Error('未找到任务');
   }
