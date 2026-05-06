@@ -1,6 +1,7 @@
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const cloudbase = require('@cloudbase/node-sdk');
 const openaiModule = require('openai');
 
@@ -9,6 +10,7 @@ const SECRET_ID = process.env.CLOUDBASE_SECRET_ID;
 const SECRET_KEY = process.env.CLOUDBASE_SECRET_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
+const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4.1-mini';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || '';
 const WORKER_SHARED_SECRET = process.env.WORKER_SHARED_SECRET;
 const PORT = Number(process.env.PORT || 3000);
@@ -76,14 +78,277 @@ function verifySignature(body) {
   return signPayload(jobId, timestamp, WORKER_SHARED_SECRET) === signature;
 }
 
-function buildDoorImageInstruction(job) {
+function getReferenceImages(job) {
+  return Array.isArray(job.referenceImages) ? job.referenceImages.filter((item) => item && item.originalImageFileID) : [];
+}
+
+function getPrimaryReferenceImage(job) {
+  const referenceImages = getReferenceImages(job);
+  return referenceImages.find((item) => item.slotId === 'full-door') || referenceImages[0] || null;
+}
+
+function getHandleDetailImage(job) {
+  const referenceImages = getReferenceImages(job);
+  return referenceImages.find((item) => item.slotId === 'handle-detail') || null;
+}
+
+function getPngSize(buffer) {
+  if (!buffer || buffer.length < 24 || buffer.toString('ascii', 1, 4) !== 'PNG') {
+    return null;
+  }
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20)
+  };
+}
+
+function getJpegSize(buffer) {
+  if (!buffer || buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) {
+    return null;
+  }
+  let offset = 2;
+  while (offset < buffer.length) {
+    if (buffer[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = buffer[offset + 1];
+    if (marker === 0xd8 || marker === 0xd9) {
+      offset += 2;
+      continue;
+    }
+    const size = buffer.readUInt16BE(offset + 2);
+    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+      return {
+        height: buffer.readUInt16BE(offset + 5),
+        width: buffer.readUInt16BE(offset + 7)
+      };
+    }
+    offset += 2 + size;
+  }
+  return null;
+}
+
+function getImageSize(buffer, fileID) {
+  const extension = getFileExtensionFromPath(fileID, 'png');
+  if (extension === 'png') {
+    return getPngSize(buffer);
+  }
+  if (extension === 'jpg' || extension === 'jpeg') {
+    return getJpegSize(buffer);
+  }
+  return getPngSize(buffer) || getJpegSize(buffer);
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function buildHandleMaskBuffer(width, height, box) {
+  const rowLength = 1 + (width * 4);
+  const raw = Buffer.alloc(rowLength * height);
+  for (let y = 0; y < height; y += 1) {
+    const rowStart = y * rowLength;
+    raw[rowStart] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const pixelStart = rowStart + 1 + (x * 4);
+      const inside = x >= box.left && x < box.right && y >= box.top && y < box.bottom;
+      raw[pixelStart] = 255;
+      raw[pixelStart + 1] = 255;
+      raw[pixelStart + 2] = 255;
+      raw[pixelStart + 3] = inside ? 0 : 255;
+    }
+  }
+
+  const chunks = [];
+  const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  chunks.push(pngHeader);
+
+  function createChunk(type, data) {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length, 0);
+    const typeBuffer = Buffer.from(type, 'ascii');
+    const crcInput = Buffer.concat([typeBuffer, data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE((crc32(crcInput) >>> 0), 0);
+    return Buffer.concat([length, typeBuffer, data, crc]);
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+  chunks.push(createChunk('IHDR', ihdr));
+  chunks.push(createChunk('IDAT', zlib.deflateSync(raw)));
+  chunks.push(createChunk('IEND', Buffer.alloc(0)));
+  return Buffer.concat(chunks);
+}
+
+const crcTable = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (let index = 0; index < buffer.length; index += 1) {
+    crc = crcTable[(crc ^ buffer[index]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function normalizeMaskBox(rawBox, size, source) {
+  if (!rawBox || !size || !size.width || !size.height) {
+    return null;
+  }
+  const left = clamp(Math.round(rawBox.left), 0, Math.max(size.width - 1, 0));
+  const top = clamp(Math.round(rawBox.top), 0, Math.max(size.height - 1, 0));
+  const right = clamp(Math.round(rawBox.right), left + 1, size.width);
+  const bottom = clamp(Math.round(rawBox.bottom), top + 1, size.height);
+  if (right <= left || bottom <= top) {
+    return null;
+  }
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+    source: source || rawBox.source || 'unknown'
+  };
+}
+
+function inferHandleMaskBox(size, handleBuffer, job) {
+  if (!size || !size.width || !size.height) {
+    return null;
+  }
+  const aspect = handleBuffer && handleBuffer.length ? 0.28 : 0.22;
+  const boxWidth = Math.max(Math.round(size.width * aspect), 140);
+  const boxHeight = Math.max(Math.round(boxWidth * 1.4), 180);
+  const isDoubleDoor = /双开|子母|四开|六开/.test(job && job.doorType || '');
+  const centerX = isDoubleDoor ? size.width * 0.5 : size.width * 0.78;
+  const centerY = size.height * 0.5;
+  return normalizeMaskBox({
+    left: centerX - (boxWidth / 2),
+    top: centerY - (boxHeight / 2),
+    right: centerX + (boxWidth / 2),
+    bottom: centerY + (boxHeight / 2)
+  }, size, isDoubleDoor ? 'door-type-center-heuristic' : 'door-type-side-heuristic');
+}
+
+function toDataUrl(buffer, fileID) {
+  return `data:${getMimeType(getFileExtensionFromPath(fileID, 'png'))};base64,${buffer.toString('base64')}`;
+}
+
+function extractJsonObject(text) {
+  if (!text) {
+    return null;
+  }
+  const matched = /\{[\s\S]*\}/.exec(text);
+  if (!matched) {
+    return null;
+  }
+  try {
+    return JSON.parse(matched[0]);
+  } catch (error) {
+    return null;
+  }
+}
+
+async function detectHandleMaskBox(primaryBuffer, primaryFileID, handleBuffer, handleFileID, size, job) {
+  if (!primaryBuffer || !handleBuffer || !size) {
+    return null;
+  }
+  const response = await openai.responses.create({
+    model: OPENAI_VISION_MODEL,
+    input: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: [
+              '你要定位整门照中的门把手区域。',
+              `门类型：${job && job.doorType ? job.doorType : '未指定'}`,
+              '第一张图是整门照，第二张图是要融合上去的门把手细节图。',
+              '请在整门照中找到最适合替换为该门把手的位置。',
+              '只返回 JSON，不要返回任何额外文字。',
+              'JSON 格式必须为：{"left":整数,"top":整数,"right":整数,"bottom":整数}。',
+              `坐标基于第一张图原始尺寸 width=${size.width}, height=${size.height}。`,
+              '如果门上已有把手，就框住原把手区域；如果不明显，也要给出最合理的门把手安装区域。'
+            ].join('\n')
+          },
+          {
+            type: 'input_image',
+            image_url: toDataUrl(primaryBuffer, primaryFileID)
+          },
+          {
+            type: 'input_image',
+            image_url: toDataUrl(handleBuffer, handleFileID)
+          }
+        ]
+      }
+    ]
+  });
+  const text = response.output_text || '';
+  const parsed = extractJsonObject(text);
+  return normalizeMaskBox(parsed, size, 'vision-detected');
+}
+
+function buildDoorImageInstruction(job, maskBox) {
+  const targetParts = Array.isArray(job.targetParts)
+    ? job.targetParts.map((item) => (item === 'handle' ? '门把手' : item)).filter(Boolean)
+    : [];
+  const targetPartText = targetParts.length ? targetParts.join('、') : '门体';
+  const referenceImages = getReferenceImages(job);
+  const imageLines = referenceImages.map((item, index) => {
+    const label = item.slotId === 'full-door'
+      ? '整门上下文图'
+      : item.slotId === 'handle-detail'
+        ? '门把手细节图'
+        : (item.slotId || `参考图${index + 1}`);
+    return `参考图${index + 1}：${label}`;
+  });
+  const hasHandleDetail = referenceImages.some((item) => item.slotId === 'handle-detail');
+  const onlyFullDoor = referenceImages.length > 0 && !hasHandleDetail;
+  const maskInstruction = maskBox
+    ? `系统检测到门把手编辑区域：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。本次只允许在该区域及极小衔接边缘内编辑。`
+    : '本次未启用区域 mask，请尽量仅围绕门把手及必要衔接区域做处理。';
+
   return [
-    '请在保留原始拍摄角度和整体构图的前提下处理这张门业图片。',
+    '请在保留原始拍摄角度和整体构图的前提下处理这组门业参考图片。',
     `用途：${job.templateType || '门业展示'}`,
     `门类型：${job.doorType || '未指定'}`,
+    `目标部件：${targetPartText}`,
     `风格：${job.style || '未指定'}`,
     `补充要求：${job.requirement || '按当前图片处理'}`,
-    '优先围绕门体、材质、颜色、空间氛围做优化，不要无关改动。'
+    imageLines.length ? imageLines.join('\n') : '参考图：未提供多图标记',
+    maskInstruction,
+    onlyFullDoor
+      ? '当前没有门把手细节照，请先在整门图中识别门把手区域，仅围绕门把手及必要衔接区域做处理，不要改变原门的材质、颜色、纹理、漆面和整体结构。'
+      : [
+          '高优先级指令：只要输入中包含门把手细节图，本次任务就默认必须执行“把该门把手融合到整门照中”的操作；这是强制目标，不需要等待客户额外说明。',
+          '高优先级指令：整门上下文图是最终输出的唯一基底图，必须保留其门扇、门框、材质、颜色、纹理、漆面、表面工艺、光影和整体结构，不得重绘成其他材质或风格。',
+          '高优先级指令：门把手细节图是门把手款式的唯一参考来源，请先准确识别并提取该门把手主体，不要自行设计、替换或脑补其他把手款式。',
+          '任务目标：必须在整门照中原门把手所在位置完成门把手的替换或融合，可理解为把细节图中的门把手直接贴合到整门照中，并输出已经上把手后的最终效果图。',
+          '如果整门照中的原把手与细节图不一致，应以细节图中的门把手为准完成替换，而不是保留原把手。',
+          '融合时必须优先保持门把手的材质、造型、颜色、纹理、边界和关键细节一致，再匹配整门图中的位置、比例、透视、光照、阴影与遮挡关系。',
+          '除门把手及其必要衔接区域外，禁止修改门板、门框、玻璃、墙面和背景；不要改变原门的材质、颜色、纹理和表面质感。',
+          '如果无法同时满足全部要求，也必须优先保证整门材质不变，并且最终成图里明确出现来自细节图款式的门把手，而不是生成新的把手或漏掉把手。'
+        ].join('\n'),
+    '优先围绕目标部件和门体关系做优化，不要把整门上下文误解为所有部件都需要大改。'
   ].join('\n');
 }
 
@@ -153,9 +418,9 @@ async function updateJob(jobId, data) {
   await collection.doc(jobId).update(data);
 }
 
-async function downloadOriginalImage(job) {
+async function downloadOriginalImage(fileID) {
   const result = await app.downloadFile({
-    fileID: job.originalImageFileID
+    fileID
   });
   return result.fileContent;
 }
@@ -169,11 +434,89 @@ async function uploadResult(jobId, version, buffer) {
   return result.fileID;
 }
 
-async function createInputImage(job, sourceBuffer) {
-  const extension = getFileExtensionFromPath(job.originalImageFileID, 'png');
-  return toFile(sourceBuffer, `door-source.${extension}`, {
+async function createInputImage(fileID, sourceBuffer, fallbackName) {
+  const extension = getFileExtensionFromPath(fileID, 'png');
+  return toFile(sourceBuffer, fallbackName || `door-source.${extension}`, {
     type: getMimeType(extension)
   });
+}
+
+async function createMaskFile(maskBuffer) {
+  return toFile(maskBuffer, 'handle-mask.png', {
+    type: 'image/png'
+  });
+}
+
+async function buildEditArtifacts(job) {
+  const primaryImage = getPrimaryReferenceImage(job);
+  if (!primaryImage) {
+    if (!job.originalImageFileID) {
+      throw new Error('缺少原始图片');
+    }
+    const sourceBuffer = await downloadOriginalImage(job.originalImageFileID);
+    console.log('[worker] downloaded source image', job._id || job.jobId, sourceBuffer.length);
+    return {
+      inputImages: [await createInputImage(job.originalImageFileID, sourceBuffer, 'door-source.png')],
+      maskFile: null,
+      maskBox: null,
+      detectionMode: 'single-image-fallback'
+    };
+  }
+
+  const primaryBuffer = await downloadOriginalImage(primaryImage.originalImageFileID);
+  const inputImages = [await createInputImage(primaryImage.originalImageFileID, primaryBuffer, `${primaryImage.slotId || 'full-door'}.png`)];
+  const handleDetail = getHandleDetailImage(job);
+  let handleBuffer = null;
+  if (handleDetail) {
+    handleBuffer = await downloadOriginalImage(handleDetail.originalImageFileID);
+    inputImages.push(await createInputImage(handleDetail.originalImageFileID, handleBuffer, `${handleDetail.slotId || 'handle-detail'}.png`));
+  }
+
+  const primarySize = getImageSize(primaryBuffer, primaryImage.originalImageFileID);
+  if (!primarySize || !primarySize.width || !primarySize.height) {
+    throw new Error('无法识别整门照尺寸，暂时不能生成门把手编辑区域');
+  }
+  let maskBox = null;
+  let maskFile = null;
+  let detectionMode = 'none';
+  if (handleDetail) {
+    try {
+      maskBox = await detectHandleMaskBox(
+        primaryBuffer,
+        primaryImage.originalImageFileID,
+        handleBuffer,
+        handleDetail.originalImageFileID,
+        primarySize,
+        job
+      );
+    } catch (error) {
+      console.warn('[worker] vision handle detection failed', job._id || job.jobId, error && error.message ? error.message : error);
+    }
+    if (!maskBox) {
+      maskBox = inferHandleMaskBox(primarySize, handleBuffer, job);
+    }
+    if (!maskBox) {
+      throw new Error('未能确定门把手编辑区域');
+    }
+    const maskBuffer = buildHandleMaskBuffer(primarySize.width, primarySize.height, maskBox);
+    maskFile = await createMaskFile(maskBuffer);
+    detectionMode = maskBox.source || 'heuristic';
+  }
+
+  console.log('[worker] downloaded edit artifacts', job._id || job.jobId, {
+    inputImageCount: inputImages.length,
+    hasHandleDetail: !!handleDetail,
+    primarySize,
+    detectionMode,
+    maskBox
+  });
+
+  return {
+    inputImages,
+    maskFile,
+    maskBox,
+    detectionMode
+  };
 }
 
 async function readImageResponseBody(response) {
@@ -190,16 +533,54 @@ async function readImageResponseBody(response) {
   throw new Error('暂时无法识别返回图片');
 }
 
+function shouldRetryImageApi(error) {
+  return !!(error && error.status === 502 && error.type === 'upstream_error');
+}
+
+async function requestEditedImage(jobId, inputImages, prompt, options) {
+  const requestOptions = options || {};
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      console.log('[worker] calling image api', {
+        jobId,
+        attempt,
+        imageCount: inputImages.length,
+        hasMask: !!requestOptions.mask,
+        baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
+        model: OPENAI_IMAGE_MODEL,
+        visionModel: OPENAI_VISION_MODEL
+      });
+      return await openai.images.edit({
+        model: OPENAI_IMAGE_MODEL,
+        image: inputImages,
+        ...(requestOptions.mask ? { mask: requestOptions.mask } : {}),
+        prompt,
+        size: '1024x1024'
+      });
+    } catch (error) {
+      if (attempt === 1 && shouldRetryImageApi(error)) {
+        console.warn('[worker] retrying image api after upstream 502', {
+          jobId,
+          requestID: error.requestID || '',
+          message: error.message
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 async function processJob(jobId) {
   assertConfigured();
   console.log('[worker] start processJob', jobId);
 
   const job = await getJob(jobId);
-  console.log('[worker] fetched job', jobId, !!job, job ? Object.keys(job) : [], job && job.originalImageFileID);
+  console.log('[worker] fetched job', jobId, !!job, job ? Object.keys(job) : [], job && (job.primaryImageFileID || job.originalImageFileID));
   if (!job) {
     throw new Error('未找到任务');
   }
-  if (!job.originalImageFileID) {
+  if (!(job.primaryImageFileID || job.originalImageFileID)) {
     throw new Error('缺少原始图片');
   }
 
@@ -212,20 +593,24 @@ async function processJob(jobId) {
   });
   console.log('[worker] updated job to processing', jobId);
 
-  const sourceBuffer = await downloadOriginalImage(job);
-  console.log('[worker] downloaded source image', jobId, sourceBuffer.length);
-  const inputImage = await createInputImage(job, sourceBuffer);
-  console.log('[worker] created input image', jobId);
-  console.log('[worker] calling image api', {
-    jobId,
-    baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
-    model: OPENAI_IMAGE_MODEL
+  const editArtifacts = await buildEditArtifacts(job);
+  console.log('[worker] prepared input images', jobId, {
+    imageCount: editArtifacts.inputImages.length,
+    hasMask: !!editArtifacts.maskFile,
+    maskBox: editArtifacts.maskBox,
+    detectionMode: editArtifacts.detectionMode
   });
-  const response = await openai.images.edit({
-    model: OPENAI_IMAGE_MODEL,
-    image: inputImage,
-    prompt: buildDoorImageInstruction(job),
-    size: '1024x1024'
+  const prompt = buildDoorImageInstruction(job, editArtifacts.maskBox);
+  console.log('[worker] built prompt', {
+    jobId,
+    hasHandleDetail: !!getHandleDetailImage(job),
+    referenceImageCount: getReferenceImages(job).length,
+    hasMask: !!editArtifacts.maskFile,
+    detectionMode: editArtifacts.detectionMode,
+    maskBox: editArtifacts.maskBox
+  });
+  const response = await requestEditedImage(jobId, editArtifacts.inputImages, prompt, {
+    mask: editArtifacts.maskFile
   });
   console.log('[worker] received openai response', jobId);
 
@@ -308,6 +693,7 @@ const server = http.createServer(async (req, res) => {
             provider: 'openai-worker',
             providerStatus: 'failed',
             errorMessage: error && error.message ? error.message : '处理失败，请稍后再试',
+            needsManualReview: /编辑区域|门把手/.test(error && error.message ? error.message : ''),
             updatedAt: Date.now()
           });
         } catch (updateError) {
