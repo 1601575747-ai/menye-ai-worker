@@ -281,8 +281,8 @@ async function detectHandleStyle(primaryBuffer, primaryFileID, handleBuffer, han
             type: 'input_text',
             text: [
               '请识别第二张门把手细节图中的门把手外观特征，只返回 JSON。',
-              'JSON 格式必须为：{"color":"...","material":"...","finish":"..."}。',
-              '其中 color 表示可见主颜色，material 表示材质，finish 表示表面工艺或质感。',
+              'JSON 格式必须为：{"color":"...","material":"...","finish":"...","shape":"...","base":"...","details":"..."}。',
+              '其中 color 表示可见主颜色，material 表示材质，finish 表示表面工艺或质感，shape 表示主体造型，base 表示把手底座/面板特征，details 表示纹路、转角、装饰、镂空、线条等关键细节。',
               '不要解释，不要输出 markdown。'
             ].join('\n')
           },
@@ -305,7 +305,10 @@ async function detectHandleStyle(primaryBuffer, primaryFileID, handleBuffer, han
   return {
     color: parsed.color || '',
     material: parsed.material || '',
-    finish: parsed.finish || ''
+    finish: parsed.finish || '',
+    shape: parsed.shape || '',
+    base: parsed.base || '',
+    details: parsed.details || ''
   };
 }
 
@@ -368,9 +371,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle) {
   const maskInstruction = maskBox
     ? `系统检测到门把手编辑区域：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。本次只允许在该区域及极小衔接边缘内编辑。`
     : '本次未启用区域 mask，请尽量仅围绕门把手及必要衔接区域做处理。';
-  const handleStyleInstruction = handleStyle && (handleStyle.color || handleStyle.material || handleStyle.finish)
-    ? `系统识别到门把手细节特征：颜色=${handleStyle.color || '未识别'}；材质=${handleStyle.material || '未识别'}；表面质感=${handleStyle.finish || '未识别'}。最终成图中的门把手必须优先保持这些特征，尤其要以细节图中的颜色为准，不要因为环境光或门体配色自动改成其他颜色。`
-    : '门把手颜色、材质和表面质感必须以门把手细节图为准，不要自动偏色。';
+  const handleStyleInstruction = handleStyle && (handleStyle.color || handleStyle.material || handleStyle.finish || handleStyle.shape || handleStyle.base || handleStyle.details)
+    ? `系统识别到门把手细节特征：颜色=${handleStyle.color || '未识别'}；材质=${handleStyle.material || '未识别'}；表面质感=${handleStyle.finish || '未识别'}；主体造型=${handleStyle.shape || '未识别'}；底座/面板=${handleStyle.base || '未识别'}；关键细节=${handleStyle.details || '未识别'}。最终成图中的门把手必须优先保持这些特征，尤其要以细节图中的颜色、主体造型、底座结构、边角转折和装饰细节为准，不要因为环境光或门体配色自动改成其他颜色，也不要把细节简化成相似但不同的款式。`
+    : '门把手颜色、材质、主体造型、底座结构和关键细节都必须以门把手细节图为准，不要自动偏色，也不要简化细节。';
 
   return [
     '请在保留原始拍摄角度和整体构图的前提下处理这组门业参考图片。',
@@ -390,9 +393,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle) {
           '高优先级指令：门把手细节图是门把手款式的唯一参考来源，请先准确识别并提取该门把手主体，不要自行设计、替换或脑补其他把手款式。',
           '任务目标：必须在整门照中原门把手所在位置完成门把手的替换或融合，可理解为把细节图中的门把手直接贴合到整门照中，并输出已经上把手后的最终效果图。',
           '如果整门照中的原把手与细节图不一致，应以细节图中的门把手为准完成替换，而不是保留原把手。',
-          '融合时必须优先保持门把手的材质、造型、颜色、纹理、边界和关键细节一致，再匹配整门图中的位置、比例、透视、光照、阴影与遮挡关系。',
+          '融合时必须优先保持门把手的材质、造型、颜色、纹理、边界、底座结构、边角转折和关键细节一致，再匹配整门图中的位置、比例、透视、光照、阴影与遮挡关系。',
           '除门把手及其必要衔接区域外，禁止修改门板、门框、玻璃、墙面和背景；不要改变原门的材质、颜色、纹理和表面质感。',
-          '如果无法同时满足全部要求，也必须优先保证整门材质不变，并且最终成图里明确出现来自细节图款式的门把手，而不是生成新的把手或漏掉把手。'
+          '如果无法同时满足全部要求，也必须优先保证整门材质不变，并且最终成图里明确出现来自细节图款式的门把手；宁可保留细节图中的底座、轮廓、线条、转角和装饰特征，也不要生成一个只有大体相似轮廓的新把手。'
         ].join('\n'),
     '优先围绕目标部件和门体关系做优化，不要把整门上下文误解为所有部件都需要大改。'
   ].join('\n');
