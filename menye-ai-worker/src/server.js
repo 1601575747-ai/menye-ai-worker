@@ -267,6 +267,48 @@ function extractJsonObject(text) {
   }
 }
 
+async function detectHandleStyle(primaryBuffer, primaryFileID, handleBuffer, handleFileID) {
+  if (!handleBuffer) {
+    return null;
+  }
+  const response = await openai.responses.create({
+    model: OPENAI_VISION_MODEL,
+    input: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: [
+              '请识别第二张门把手细节图中的门把手外观特征，只返回 JSON。',
+              'JSON 格式必须为：{"color":"...","material":"...","finish":"..."}。',
+              '其中 color 表示可见主颜色，material 表示材质，finish 表示表面工艺或质感。',
+              '不要解释，不要输出 markdown。'
+            ].join('\n')
+          },
+          {
+            type: 'input_image',
+            image_url: toDataUrl(primaryBuffer, primaryFileID)
+          },
+          {
+            type: 'input_image',
+            image_url: toDataUrl(handleBuffer, handleFileID)
+          }
+        ]
+      }
+    ]
+  });
+  const parsed = extractJsonObject(response.output_text || '');
+  if (!parsed) {
+    return null;
+  }
+  return {
+    color: parsed.color || '',
+    material: parsed.material || '',
+    finish: parsed.finish || ''
+  };
+}
+
 async function detectHandleMaskBox(primaryBuffer, primaryFileID, handleBuffer, handleFileID, size, job) {
   if (!primaryBuffer || !handleBuffer || !size) {
     return null;
@@ -307,7 +349,7 @@ async function detectHandleMaskBox(primaryBuffer, primaryFileID, handleBuffer, h
   return normalizeMaskBox(parsed, size, 'vision-detected');
 }
 
-function buildDoorImageInstruction(job, maskBox) {
+function buildDoorImageInstruction(job, maskBox, handleStyle) {
   const targetParts = Array.isArray(job.targetParts)
     ? job.targetParts.map((item) => (item === 'handle' ? '门把手' : item)).filter(Boolean)
     : [];
@@ -326,6 +368,9 @@ function buildDoorImageInstruction(job, maskBox) {
   const maskInstruction = maskBox
     ? `系统检测到门把手编辑区域：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。本次只允许在该区域及极小衔接边缘内编辑。`
     : '本次未启用区域 mask，请尽量仅围绕门把手及必要衔接区域做处理。';
+  const handleStyleInstruction = handleStyle && (handleStyle.color || handleStyle.material || handleStyle.finish)
+    ? `系统识别到门把手细节特征：颜色=${handleStyle.color || '未识别'}；材质=${handleStyle.material || '未识别'}；表面质感=${handleStyle.finish || '未识别'}。最终成图中的门把手必须优先保持这些特征，尤其要以细节图中的颜色为准，不要因为环境光或门体配色自动改成其他颜色。`
+    : '门把手颜色、材质和表面质感必须以门把手细节图为准，不要自动偏色。';
 
   return [
     '请在保留原始拍摄角度和整体构图的前提下处理这组门业参考图片。',
@@ -336,6 +381,7 @@ function buildDoorImageInstruction(job, maskBox) {
     `补充要求：${job.requirement || '按当前图片处理'}`,
     imageLines.length ? imageLines.join('\n') : '参考图：未提供多图标记',
     maskInstruction,
+    handleStyleInstruction,
     onlyFullDoor
       ? '当前没有门把手细节照，请先在整门图中识别门把手区域，仅围绕门把手及必要衔接区域做处理，不要改变原门的材质、颜色、纹理、漆面和整体结构。'
       : [
@@ -479,7 +525,18 @@ async function buildEditArtifacts(job) {
   let maskBox = null;
   let maskFile = null;
   let detectionMode = 'none';
+  let handleStyle = null;
   if (handleDetail) {
+    try {
+      handleStyle = await detectHandleStyle(
+        primaryBuffer,
+        primaryImage.originalImageFileID,
+        handleBuffer,
+        handleDetail.originalImageFileID
+      );
+    } catch (error) {
+      console.warn('[worker] vision handle style detection failed', job._id || job.jobId, error && error.message ? error.message : error);
+    }
     try {
       maskBox = await detectHandleMaskBox(
         primaryBuffer,
@@ -508,14 +565,16 @@ async function buildEditArtifacts(job) {
     hasHandleDetail: !!handleDetail,
     primarySize,
     detectionMode,
-    maskBox
+    maskBox,
+    handleStyle
   });
 
   return {
     inputImages,
     maskFile,
     maskBox,
-    detectionMode
+    detectionMode,
+    handleStyle
   };
 }
 
@@ -600,14 +659,15 @@ async function processJob(jobId) {
     maskBox: editArtifacts.maskBox,
     detectionMode: editArtifacts.detectionMode
   });
-  const prompt = buildDoorImageInstruction(job, editArtifacts.maskBox);
+  const prompt = buildDoorImageInstruction(job, editArtifacts.maskBox, editArtifacts.handleStyle);
   console.log('[worker] built prompt', {
     jobId,
     hasHandleDetail: !!getHandleDetailImage(job),
     referenceImageCount: getReferenceImages(job).length,
     hasMask: !!editArtifacts.maskFile,
     detectionMode: editArtifacts.detectionMode,
-    maskBox: editArtifacts.maskBox
+    maskBox: editArtifacts.maskBox,
+    handleStyle: editArtifacts.handleStyle
   });
   const response = await requestEditedImage(jobId, editArtifacts.inputImages, prompt, {
     mask: editArtifacts.maskFile
