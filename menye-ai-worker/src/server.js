@@ -374,6 +374,14 @@ function buildDoorImageInstruction(job, maskBox, handleStyle) {
   const handleStyleInstruction = handleStyle && (handleStyle.color || handleStyle.material || handleStyle.finish || handleStyle.shape || handleStyle.base || handleStyle.details)
     ? `系统识别到门把手细节特征：颜色=${handleStyle.color || '未识别'}；材质=${handleStyle.material || '未识别'}；表面质感=${handleStyle.finish || '未识别'}；主体造型=${handleStyle.shape || '未识别'}；底座/面板=${handleStyle.base || '未识别'}；关键细节=${handleStyle.details || '未识别'}。最终成图中的门把手必须优先保持这些特征，尤其要以细节图中的颜色、主体造型、底座结构、边角转折和装饰细节为准，不要因为环境光或门体配色自动改成其他颜色，也不要把细节简化成相似但不同的款式。`
     : '门把手颜色、材质、主体造型、底座结构和关键细节都必须以门把手细节图为准，不要自动偏色，也不要简化细节。';
+  const modifyScopeInstruction = job && job.actionType === 'modify'
+    ? [
+        '高优先级指令：本次任务是继续修改，只允许执行用户这一次明确提出的修改要求。',
+        '除非用户这次明确要求改变门把手样式、颜色、材质、底座、轮廓或结构，否则这些内容都必须保持与当前输入图一致，不得擅自修改。',
+        '除用户点名要改的局部外，其他门体、门框、玻璃、墙面、背景、光影关系和已有把手样式都不要动。',
+        '如果用户只要求删除、弱化或调整某个局部，就只处理该局部，不要顺带优化、重绘、替换或美化其他部分。'
+      ].join('\n')
+    : '如果用户没有明确提出某项变化，就不要主动修改该项内容。';
 
   return [
     '请在保留原始拍摄角度和整体构图的前提下处理这组门业参考图片。',
@@ -385,6 +393,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle) {
     imageLines.length ? imageLines.join('\n') : '参考图：未提供多图标记',
     maskInstruction,
     handleStyleInstruction,
+    modifyScopeInstruction,
     onlyFullDoor
       ? '当前没有门把手细节照，请先在整门图中识别门把手区域，仅围绕门把手及必要衔接区域做处理，不要改变原门的材质、颜色、纹理、漆面和整体结构。'
       : [
