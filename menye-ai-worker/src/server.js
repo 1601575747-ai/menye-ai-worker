@@ -128,8 +128,10 @@ function getReferenceStylePrompt(slotId) {
     case 'color-sample':
       return [
         '请识别这张门体颜色参考图中的颜色和材质特征，只返回 JSON。',
-        'JSON 格式必须为：{"part":"门体颜色","color":"...","material":"...","finish":"...","shape":"...","structure":"...","details":"..."}。',
-        '其中 color 表示门体主色和可见色偏，material 表示材质，finish 表示哑光/亮光/金属/木纹等表面质感，shape 可以写“不适用”，structure 表示纹理方向或拼色关系，details 表示木纹、拉丝、颗粒、色差等关键细节。',
+        'JSON 格式必须为：{"part":"门体颜色","color":"...","colorFamily":"...","undertone":"...","brightness":"...","saturation":"...","material":"...","finish":"...","shape":"...","structure":"...","details":"...","applyDescription":"..."}。',
+        '识别时请忽略拍摄光照、阴影、高光、反光和白平衡偏差，优先判断材料本身的固有颜色。',
+        '其中 color 表示可直接用于生成的具体颜色描述，不要只写“深色”“浅色”；colorFamily 表示颜色大类，例如黑、灰、白、棕、红棕、金、香槟、木色等；undertone 表示冷暖色偏，例如偏黄、偏红、偏灰、偏蓝、偏金；brightness 表示明度，例如深/中深/中/浅；saturation 表示饱和度，例如低饱和/中饱和/高饱和；material 表示材质；finish 表示哑光/亮光/金属/木纹等表面质感；shape 可以写“不适用”；structure 表示纹理方向或拼色关系；details 表示木纹、拉丝、颗粒、色差等关键细节；applyDescription 表示给图像编辑模型执行时应使用的一句话颜色描述。',
+        '如果图片里有多个颜色，请选择最主要、最适合作为门体表面的颜色，并在 details 里说明次要色或纹理色差。',
         '不要解释，不要输出 markdown。'
       ].join('\n');
     default:
@@ -349,6 +351,10 @@ async function detectHandleStyle(primaryBuffer, primaryFileID, handleBuffer, han
   }
   return {
     color: parsed.color || '',
+    colorFamily: parsed.colorFamily || '',
+    undertone: parsed.undertone || '',
+    brightness: parsed.brightness || '',
+    saturation: parsed.saturation || '',
     material: parsed.material || '',
     finish: parsed.finish || '',
     shape: parsed.shape || '',
@@ -435,7 +441,8 @@ async function detectReferenceStyle(referenceImage, referenceBuffer) {
     structure: parsed.structure || '',
     profile: parsed.profile || '',
     edge: parsed.edge || '',
-    details: parsed.details || ''
+    details: parsed.details || '',
+    applyDescription: parsed.applyDescription || ''
   };
 }
 
@@ -445,7 +452,7 @@ function buildReferenceStyleInstruction(referenceStyles) {
     return '';
   }
   return styles.map((style) => (
-    `系统识别到${style.label || style.part || '参考图'}特征：颜色=${style.color || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}。`
+    `系统识别到${style.label || style.part || '参考图'}特征：颜色=${style.color || '未识别'}；颜色大类=${style.colorFamily || '未识别'}；冷暖色偏=${style.undertone || '未识别'}；明度=${style.brightness || '未识别'}；饱和度=${style.saturation || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '未识别'}。`
   )).join('\n');
 }
 
@@ -504,6 +511,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const edgeTrimStyle = Array.isArray(referenceStyles)
     ? referenceStyles.find((style) => style && style.slotId === 'edge-trim-detail')
     : null;
+  const colorSampleStyle = Array.isArray(referenceStyles)
+    ? referenceStyles.find((style) => style && style.slotId === 'color-sample')
+    : null;
   const edgeTrimStrictInstruction = hasEdgeTrimDetail
     ? [
         '高优先级指令：包边细节图是包边款式的唯一参考来源，严格程度与门把手细节图相同。',
@@ -529,12 +539,24 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? '高优先级指令：输入中包含包边细节图时，系统默认必须自动识别、定位并更换/融合该包边参考；不需要客户额外说明“把包边 P 上去”。'
       : '',
     hasColorSample
-      ? '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别门体主色、色偏、纹理和表面质感，并在需要处理门体颜色时优先按该参考图执行，不要凭空改成其他颜色。'
+      ? '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别门体主色、色偏、纹理和表面质感，并默认按该颜色参考图调整门体颜色；不需要客户额外说明“改成这个颜色”。'
       : '',
     hasEdgeTrimDetail || hasColorSample
       ? '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、背景或其他未点名内容。'
       : ''
   ].filter(Boolean).join('\n');
+  const colorSampleStrictInstruction = colorSampleStyle
+    ? [
+        '高优先级指令：颜色参考图是门体颜色和材质观感的唯一颜色参考来源，严格程度与门把手、包边细节图相同。',
+        '高优先级指令：只要输入中包含颜色参考图，本次任务就默认必须执行“把整门照中的门体表面颜色调整为该参考颜色”的操作；这是强制目标，不需要等待客户额外说明。',
+        `颜色执行描述：${colorSampleStyle.applyDescription || colorSampleStyle.color || '以颜色参考图识别结果为准'}。`,
+        `颜色约束：颜色大类=${colorSampleStyle.colorFamily || '未识别'}；冷暖色偏=${colorSampleStyle.undertone || '未识别'}；明度=${colorSampleStyle.brightness || '未识别'}；饱和度=${colorSampleStyle.saturation || '未识别'}。`,
+        '请忽略颜色参考图中的拍摄光照、阴影、高光、反光和白平衡偏差，提取材料本身的固有颜色后应用到门体表面。',
+        '只允许调整门体表面颜色、纹理色差和必要材质观感；门型结构、门板线条、玻璃、把手、包边、门框比例、墙面和背景必须保持整门照原样。',
+        '不要把颜色参考图误当成新的门款式，不要因为改颜色而重绘门扇结构或替换门型。',
+        '如果无法精确匹配颜色，应优先保持门型结构不变，再尽量接近颜色参考图的固有颜色。'
+      ].join('\n')
+    : '';
   const edgeTrimOnlyFreezeInstruction = hasEdgeTrimOnlyReference
     ? [
         '本次只有包边细节参考图，没有门把手细节图或颜色参考图。',
@@ -593,6 +615,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     referenceStyleInstruction,
     edgeTrimStrictInstruction,
     auxiliaryReferenceInstruction,
+    colorSampleStrictInstruction,
     edgeTrimOnlyFreezeInstruction,
     structuredReferenceInstruction,
     modifyScopeInstruction,
