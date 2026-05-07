@@ -128,10 +128,11 @@ function getReferenceStylePrompt(slotId) {
     case 'color-sample':
       return [
         '请识别这张门体颜色参考图中的颜色和材质特征，只返回 JSON。',
-        'JSON 格式必须为：{"part":"门体颜色","color":"...","colorFamily":"...","undertone":"...","brightness":"...","saturation":"...","material":"...","finish":"...","shape":"...","structure":"...","details":"...","applyDescription":"..."}。',
+        'JSON 格式必须为：{"part":"门体颜色","color":"...","colorFamily":"...","undertone":"...","brightness":"...","saturation":"...","hueLock":"...","toneLock":"...","material":"...","finish":"...","shape":"...","structure":"...","details":"...","applyDescription":"..."}。',
         '识别时请忽略拍摄光照、阴影、高光、反光和白平衡偏差，优先判断材料本身的固有颜色。',
-        '其中 color 表示可直接用于生成的具体颜色描述，不要只写“深色”“浅色”；colorFamily 表示颜色大类，例如黑、灰、白、棕、红棕、金、香槟、木色等；undertone 表示冷暖色偏，例如偏黄、偏红、偏灰、偏蓝、偏金；brightness 表示明度，例如深/中深/中/浅；saturation 表示饱和度，例如低饱和/中饱和/高饱和；material 表示材质；finish 表示哑光/亮光/金属/木纹等表面质感；shape 可以写“不适用”；structure 表示纹理方向或拼色关系；details 表示木纹、拉丝、颗粒、色差等关键细节；applyDescription 表示给图像编辑模型执行时应使用的一句话颜色描述。',
+        '其中 color 表示可直接用于生成的具体颜色描述，不要只写“深色”“浅色”；colorFamily 表示颜色大类，例如黑、灰、白、棕、红棕、金、香槟、木色等；undertone 表示冷暖色偏，例如偏黄、偏红、偏灰、偏蓝、偏金；brightness 表示明度，例如深/中深/中/浅；saturation 表示饱和度，例如低饱和/中饱和/高饱和；hueLock 表示最不能漂移的色相约束，例如不要偏红、不要偏黄、不要偏绿、不要偏蓝；toneLock 表示最不能漂移的明暗/灰度约束，例如不要提亮、不要压暗、不要加灰、不要加暖；material 表示材质；finish 表示哑光/亮光/金属/木纹等表面质感；shape 可以写“不适用”；structure 表示纹理方向或拼色关系；details 表示木纹、拉丝、颗粒、色差等关键细节；applyDescription 表示给图像编辑模型执行时应使用的一句话颜色描述。',
         '如果图片里有多个颜色，请选择最主要、最适合作为门体表面的颜色，并在 details 里说明次要色或纹理色差。',
+        'applyDescription 必须包含颜色大类、冷暖色偏、明度、饱和度和禁止漂移方向，例如“中深低饱和冷灰木色，不要偏黄或提亮”。',
         '不要解释，不要输出 markdown。'
       ].join('\n');
     default:
@@ -355,6 +356,8 @@ async function detectHandleStyle(primaryBuffer, primaryFileID, handleBuffer, han
     undertone: parsed.undertone || '',
     brightness: parsed.brightness || '',
     saturation: parsed.saturation || '',
+    hueLock: parsed.hueLock || '',
+    toneLock: parsed.toneLock || '',
     material: parsed.material || '',
     finish: parsed.finish || '',
     shape: parsed.shape || '',
@@ -452,12 +455,13 @@ function buildReferenceStyleInstruction(referenceStyles) {
     return '';
   }
   return styles.map((style) => (
-    `系统识别到${style.label || style.part || '参考图'}特征：颜色=${style.color || '未识别'}；颜色大类=${style.colorFamily || '未识别'}；冷暖色偏=${style.undertone || '未识别'}；明度=${style.brightness || '未识别'}；饱和度=${style.saturation || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '未识别'}。`
+    `系统识别到${style.label || style.part || '参考图'}特征：颜色=${style.color || '未识别'}；颜色大类=${style.colorFamily || '未识别'}；冷暖色偏=${style.undertone || '未识别'}；明度=${style.brightness || '未识别'}；饱和度=${style.saturation || '未识别'}；色相锁定=${style.hueLock || '未识别'}；明暗/灰度锁定=${style.toneLock || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '未识别'}。`
   )).join('\n');
 }
 
 function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const requirementText = job && job.requirement ? String(job.requirement) : '';
+  const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
   const allowHandleColorChange = /把手.*颜色|颜色.*把手|门把手.*颜色|颜色.*门把手|调成门的颜色|改成门的颜色|同门颜色|跟门同色|与门同色/.test(requirementText);
   const allowHandleStyleChange = /更换把手|更改把手样式|改变把手样式|换个把手|把手款式|把手造型|把手结构/.test(requirementText);
   const allowHandleBaseChange = /去掉底座|删除底座|取消底座|不要底座|只保留把手主体|弱化底座|缩小底座/.test(requirementText);
@@ -550,8 +554,11 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '高优先级指令：颜色参考图是门体颜色和材质观感的唯一颜色参考来源，严格程度与门把手、包边细节图相同。',
         '高优先级指令：只要输入中包含颜色参考图，本次任务就默认必须执行“把整门照中的门体表面颜色调整为该参考颜色”的操作；这是强制目标，不需要等待客户额外说明。',
         `颜色执行描述：${colorSampleStyle.applyDescription || colorSampleStyle.color || '以颜色参考图识别结果为准'}。`,
-        `颜色约束：颜色大类=${colorSampleStyle.colorFamily || '未识别'}；冷暖色偏=${colorSampleStyle.undertone || '未识别'}；明度=${colorSampleStyle.brightness || '未识别'}；饱和度=${colorSampleStyle.saturation || '未识别'}。`,
+        `颜色约束：颜色大类=${colorSampleStyle.colorFamily || '未识别'}；冷暖色偏=${colorSampleStyle.undertone || '未识别'}；明度=${colorSampleStyle.brightness || '未识别'}；饱和度=${colorSampleStyle.saturation || '未识别'}；色相锁定=${colorSampleStyle.hueLock || '未识别'}；明暗/灰度锁定=${colorSampleStyle.toneLock || '未识别'}。`,
         '请忽略颜色参考图中的拍摄光照、阴影、高光、反光和白平衡偏差，提取材料本身的固有颜色后应用到门体表面。',
+        '颜色匹配优先级高于“更自然”“更高级”“更协调”的自动美化；不要为了环境光、背景色或整体风格主动把参考色调暖、调冷、调红、调黄、调蓝、提亮、压暗、加灰或降饱和。',
+        '必须保持参考色的色相、冷暖色偏、明度和饱和度关系。允许为了贴合原图光影做极轻微明暗过渡，但不能改变材料固有色。',
+        '如果整门照环境光会让颜色看起来偏色，应优先校正门体固有色，使最终视觉上更接近颜色参考图，而不是完全服从环境光。',
         '只允许调整门体表面颜色、纹理色差和必要材质观感；门型结构、门板线条、玻璃、把手、包边、门框比例、墙面和背景必须保持整门照原样。',
         '不要把颜色参考图误当成新的门款式，不要因为改颜色而重绘门扇结构或替换门型。',
         '如果无法精确匹配颜色，应优先保持门型结构不变，再尽量接近颜色参考图的固有颜色。'
@@ -576,6 +583,17 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? '结构化需求确认：客户上传了颜色参考图，因此“按颜色参考约束门体颜色和材质观感”本身已经是明确需求。'
       : ''
   ].filter(Boolean).join('\n');
+  const backgroundInstruction = backgroundInfo
+    ? [
+        `背景要求：${backgroundInfo}`,
+        '客户填写了背景信息，因此允许按该背景要求调整门后空间、墙面、地面、光线或场景氛围。',
+        '背景调整不能改变门本身的结构、颜色、纹理、把手、包边、门框比例和目标参考部件。'
+      ].join('\n')
+    : [
+        '背景要求：未填写。',
+        '高优先级指令：客户没有填写背景信息，因此默认不改背景。',
+        '必须保留整门照中的原背景、墙面、地面、空间、光线方向和整体构图；不要为了更高级、更协调或更真实而主动替换、虚化、美化或重绘背景。'
+      ].join('\n');
   const modifyScopeInstruction = job && job.actionType === 'modify'
     ? [
         '高优先级指令：本次任务是继续修改，只允许执行用户这一次明确提出的修改要求。',
@@ -607,7 +625,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     `用途：${job.templateType || '门业展示'}`,
     `门类型：${job.doorType || '未指定'}`,
     `目标部件：${targetPartText}`,
-    `风格：${job.style || '未指定'}`,
+    backgroundInstruction,
     `补充要求：${job.requirement || '按当前图片处理'}`,
     imageLines.length ? imageLines.join('\n') : '参考图：未提供多图标记',
     maskInstruction,
