@@ -92,6 +92,51 @@ function getHandleDetailImage(job) {
   return referenceImages.find((item) => item.slotId === 'handle-detail') || null;
 }
 
+function getReferenceSlotLabel(slotId) {
+  switch (slotId) {
+    case 'full-door':
+      return '整门上下文图';
+    case 'handle-detail':
+      return '门把手细节图';
+    case 'edge-trim-detail':
+      return '包边细节图';
+    case 'color-sample':
+      return '颜色参考图';
+    case 'left-leaf-detail':
+      return '左门扇细节图';
+    case 'right-leaf-detail':
+      return '右门扇细节图';
+    case 'child-leaf-detail':
+      return '小门扇细节图';
+    case 'middle-join-detail':
+      return '中缝/拼接细节图';
+    default:
+      return slotId || '参考图';
+  }
+}
+
+function getReferenceStylePrompt(slotId) {
+  switch (slotId) {
+    case 'edge-trim-detail':
+      return [
+        '请识别这张门业包边细节图中的外观特征，只返回 JSON。',
+        'JSON 格式必须为：{"part":"包边","color":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"..."}。',
+        '其中 color 表示可见主颜色，material 表示材质，finish 表示表面工艺或质感，shape 表示整体造型和宽窄比例，structure 表示门套线、收口条、压线、拼接结构，profile 表示截面层次、凹凸、倒角、圆角、折边等轮廓特征，edge 表示边角、转角、收边方式，details 表示纹路、线条、装饰、色差等关键细节。',
+        '必须尽量具体，不要只写“普通包边”“金属包边”“木纹包边”这类泛化描述。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
+    case 'color-sample':
+      return [
+        '请识别这张门体颜色参考图中的颜色和材质特征，只返回 JSON。',
+        'JSON 格式必须为：{"part":"门体颜色","color":"...","material":"...","finish":"...","shape":"...","structure":"...","details":"..."}。',
+        '其中 color 表示门体主色和可见色偏，material 表示材质，finish 表示哑光/亮光/金属/木纹等表面质感，shape 可以写“不适用”，structure 表示纹理方向或拼色关系，details 表示木纹、拉丝、颗粒、色差等关键细节。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
+    default:
+      return '';
+  }
+}
+
 function getPngSize(buffer) {
   if (!buffer || buffer.length < 24 || buffer.toString('ascii', 1, 4) !== 'PNG') {
     return null;
@@ -352,42 +397,171 @@ async function detectHandleMaskBox(primaryBuffer, primaryFileID, handleBuffer, h
   return normalizeMaskBox(parsed, size, 'vision-detected');
 }
 
-function buildDoorImageInstruction(job, maskBox, handleStyle) {
+async function detectReferenceStyle(referenceImage, referenceBuffer) {
+  const prompt = getReferenceStylePrompt(referenceImage && referenceImage.slotId);
+  if (!prompt || !referenceBuffer) {
+    return null;
+  }
+  const response = await openai.responses.create({
+    model: OPENAI_VISION_MODEL,
+    input: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: prompt
+          },
+          {
+            type: 'input_image',
+            image_url: toDataUrl(referenceBuffer, referenceImage.originalImageFileID)
+          }
+        ]
+      }
+    ]
+  });
+  const parsed = extractJsonObject(response.output_text || '');
+  if (!parsed) {
+    return null;
+  }
+  return {
+    slotId: referenceImage.slotId || '',
+    label: getReferenceSlotLabel(referenceImage.slotId),
+    part: parsed.part || getReferenceSlotLabel(referenceImage.slotId),
+    color: parsed.color || '',
+    material: parsed.material || '',
+    finish: parsed.finish || '',
+    shape: parsed.shape || '',
+    structure: parsed.structure || '',
+    profile: parsed.profile || '',
+    edge: parsed.edge || '',
+    details: parsed.details || ''
+  };
+}
+
+function buildReferenceStyleInstruction(referenceStyles) {
+  const styles = Array.isArray(referenceStyles) ? referenceStyles.filter(Boolean) : [];
+  if (!styles.length) {
+    return '';
+  }
+  return styles.map((style) => (
+    `系统识别到${style.label || style.part || '参考图'}特征：颜色=${style.color || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}。`
+  )).join('\n');
+}
+
+function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
+  const requirementText = job && job.requirement ? String(job.requirement) : '';
+  const allowHandleColorChange = /把手.*颜色|颜色.*把手|门把手.*颜色|颜色.*门把手|调成门的颜色|改成门的颜色|同门颜色|跟门同色|与门同色/.test(requirementText);
+  const allowHandleStyleChange = /更换把手|更改把手样式|改变把手样式|换个把手|把手款式|把手造型|把手结构/.test(requirementText);
+  const allowHandleBaseChange = /去掉底座|删除底座|取消底座|不要底座|只保留把手主体|弱化底座|缩小底座/.test(requirementText);
+  const allowEdgeTrimColorChange = /包边.*颜色|颜色.*包边|门套.*颜色|颜色.*门套|收口.*颜色|颜色.*收口/.test(requirementText);
+  const allowEdgeTrimStyleChange = /更换包边|更改包边|改变包边|包边款式|包边造型|包边结构|门套线.*样式|收口条.*样式/.test(requirementText);
+  const allowEdgeTrimRemoveChange = /去掉包边|删除包边|取消包边|不要包边|去掉门套线|删除门套线|取消门套线|不要门套线/.test(requirementText);
   const targetParts = Array.isArray(job.targetParts)
-    ? job.targetParts.map((item) => (item === 'handle' ? '门把手' : item)).filter(Boolean)
+    ? job.targetParts.map((item) => {
+        if (item === 'handle') {
+          return '门把手';
+        }
+        if (item === 'edge-trim') {
+          return '包边';
+        }
+        if (item === 'door-color') {
+          return '门体颜色';
+        }
+        return item;
+      }).filter(Boolean)
     : [];
   const targetPartText = targetParts.length ? targetParts.join('、') : '门体';
   const referenceImages = getReferenceImages(job);
   const imageLines = referenceImages.map((item, index) => {
-    const label = item.slotId === 'full-door'
-      ? '整门上下文图'
-      : item.slotId === 'handle-detail'
-        ? '门把手细节图'
-        : (item.slotId || `参考图${index + 1}`);
+    const label = getReferenceSlotLabel(item.slotId);
     return `参考图${index + 1}：${label}`;
   });
   const hasHandleDetail = referenceImages.some((item) => item.slotId === 'handle-detail');
-  const onlyFullDoor = referenceImages.length > 0 && !hasHandleDetail;
+  const hasEdgeTrimDetail = referenceImages.some((item) => item.slotId === 'edge-trim-detail');
+  const hasColorSample = referenceImages.some((item) => item.slotId === 'color-sample');
   const maskInstruction = maskBox
     ? `系统检测到门把手编辑区域：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。本次只允许在该区域及极小衔接边缘内编辑。`
-    : '本次未启用区域 mask，请尽量仅围绕门把手及必要衔接区域做处理。';
+    : `本次未启用区域 mask，请仅围绕目标部件（${targetPartText}）及必要衔接区域做处理，不要扩散到背景、墙面或其他未点名区域。`;
   const handleStyleInstruction = handleStyle && (handleStyle.color || handleStyle.material || handleStyle.finish || handleStyle.shape || handleStyle.base || handleStyle.details)
-    ? `系统识别到门把手细节特征：颜色=${handleStyle.color || '未识别'}；材质=${handleStyle.material || '未识别'}；表面质感=${handleStyle.finish || '未识别'}；主体造型=${handleStyle.shape || '未识别'}；底座/面板=${handleStyle.base || '未识别'}；关键细节=${handleStyle.details || '未识别'}。最终成图中的门把手必须优先保持这些特征，尤其要以细节图中的颜色、主体造型、底座结构、边角转折和装饰细节为准，不要因为环境光或门体配色自动改成其他颜色，也不要把细节简化成相似但不同的款式。`
-    : '门把手颜色、材质、主体造型、底座结构和关键细节都必须以门把手细节图为准，不要自动偏色，也不要简化细节。';
+    ? [
+        `系统识别到门把手细节特征：颜色=${handleStyle.color || '未识别'}；材质=${handleStyle.material || '未识别'}；表面质感=${handleStyle.finish || '未识别'}；主体造型=${handleStyle.shape || '未识别'}；底座/面板=${handleStyle.base || '未识别'}；关键细节=${handleStyle.details || '未识别'}。`,
+        allowHandleColorChange
+          ? '用户这次明确要求调整门把手颜色，因此颜色可以按用户要求改变；但主体造型、材质观感、底座结构和关键细节仍应尽量保持与细节图一致。'
+          : '最终成图中的门把手必须优先保持细节图中的颜色，不要因为环境光或门体配色自动改成其他颜色。',
+        allowHandleStyleChange
+          ? '用户这次明确要求改变把手样式，因此可按要求调整样式；但除用户点名变化外，仍应尽量保留其余细节。'
+          : '门把手主体造型、轮廓、线条、转角和装饰细节都应以细节图为准，不要把细节简化成相似但不同的款式。',
+        allowHandleBaseChange
+          ? '用户这次明确要求调整底座或只保留主体，因此底座相关结构可以按要求删减或弱化；但不要顺带改变把手主体样式。'
+          : '底座/面板结构也应尽量保持与细节图一致，不要擅自删除或替换。'
+      ].join('\n')
+    : hasHandleDetail
+      ? '门把手颜色、材质、主体造型、底座结构和关键细节都必须以门把手细节图为准；如果用户明确要求改变其中某项，则只改那一项。'
+      : '当前没有门把手细节图，请只在整门图中识别现有门把手；除非用户明确要求，不要擅自改变门把手款式、颜色、材质、底座结构或关键细节。';
+  const referenceStyleInstruction = buildReferenceStyleInstruction(referenceStyles);
+  const edgeTrimStyle = Array.isArray(referenceStyles)
+    ? referenceStyles.find((style) => style && style.slotId === 'edge-trim-detail')
+    : null;
+  const edgeTrimStrictInstruction = hasEdgeTrimDetail
+    ? [
+        '高优先级指令：包边细节图是包边款式的唯一参考来源，严格程度与门把手细节图相同。',
+        '高优先级指令：只要输入中包含包边细节图，本次任务就默认必须执行“把该包边融合/替换到整门照中”的操作；这是强制目标，不需要等待客户额外说明。',
+        '任务目标：请先在整门照中识别原有包边、门套线、门框内外侧收口条、压线和边缘收口区域，再把包边细节图中的包边款式融合到这些对应位置。',
+        '最终输出必须是一张已经使用参考包边后的完整整门效果图，不能只是把包边细节图当作颜色参考，也不能保留与参考图不一致的原包边。',
+        '最终成图中的包边必须优先保持包边细节图的颜色、材质、表面质感、宽窄比例、截面层次、凹凸倒角、收边方式、线条、纹理和关键装饰细节。',
+        allowEdgeTrimColorChange
+          ? '用户这次明确要求调整包边颜色，因此包边颜色可以按用户要求改变；但包边材质观感、宽窄比例、截面层次、线条结构和关键细节仍应保持与包边细节图一致。'
+          : '不要因为门体颜色、环境光或整体风格自动改变包边颜色；包边颜色必须优先跟随包边细节图。',
+        allowEdgeTrimStyleChange
+          ? '用户这次明确要求改变包边样式，因此可按要求调整样式；但除用户点名变化外，仍应尽量保留其余包边细节。'
+          : '不要把包边简化成相似但不同的款式，不要擅自改变包边宽窄、线条、截面、倒角、收边或拼接结构。',
+        allowEdgeTrimRemoveChange
+          ? '用户这次明确要求删除或取消包边，因此可以按要求处理包边；但不要顺带改变门把手、门体颜色、门型结构或背景。'
+          : '不要擅自删除、弱化、替换或重新设计包边。'
+      ].join('\n')
+    : '';
+  const auxiliaryReferenceInstruction = [
+    hasEdgeTrimDetail
+      ? '高优先级指令：输入中包含包边细节图时，系统默认必须自动识别、定位并更换/融合该包边参考；不需要客户额外说明“把包边 P 上去”。'
+      : '',
+    hasColorSample
+      ? '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别门体主色、色偏、纹理和表面质感，并在需要处理门体颜色时优先按该参考图执行，不要凭空改成其他颜色。'
+      : '',
+    hasEdgeTrimDetail || hasColorSample
+      ? '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、背景或其他未点名内容。'
+      : ''
+  ].filter(Boolean).join('\n');
+  const structuredReferenceInstruction = [
+    hasHandleDetail
+      ? '结构化需求确认：客户上传了门把手细节图，因此“更换/融合门把手”本身已经是明确需求。'
+      : '',
+    hasEdgeTrimDetail
+      ? '结构化需求确认：客户上传了包边细节图，因此“更换/融合包边”本身已经是明确需求，不应被理解为未点名改动。'
+      : '',
+    hasColorSample
+      ? '结构化需求确认：客户上传了颜色参考图，因此“按颜色参考约束门体颜色和材质观感”本身已经是明确需求。'
+      : ''
+  ].filter(Boolean).join('\n');
   const modifyScopeInstruction = job && job.actionType === 'modify'
     ? [
         '高优先级指令：本次任务是继续修改，只允许执行用户这一次明确提出的修改要求。',
+        '最高原则：只有用户明确说可以改的属性，才允许改；用户没明确说的属性，一律默认不改。',
         '最高原则：宁可少改，也不可多改；宁可保留原状，也不要擅自新增变化。',
-        '除非用户这次明确要求改变门把手样式、颜色、材质、底座、轮廓或结构，否则这些内容都必须保持与当前输入图一致，不得擅自修改。',
+        '除非用户这次明确要求改变门把手样式、颜色、材质、底座、轮廓、结构、纹理或装饰细节，否则这些内容都必须保持与当前输入图一致，不得擅自修改。',
+        '如果用户明确要求改变其中某一项（例如只改颜色、只去掉底座），则只允许改那一项，其他把手属性仍保持不变。',
+        '你必须自己判断用户点名允许改动的是哪一项属性，并把未点名属性视为冻结状态。',
         '除用户点名要改的局部外，其他门体、门框、玻璃、墙面、背景、光影关系和已有把手样式都不要动。',
         '如果用户只要求删除、弱化或调整某个局部，就只处理该局部，不要顺带优化、重绘、替换、美化或修正其他部分。',
-        '当用户要求与把手有关的局部调整时，默认先保留现有把手款式、颜色、材质和结构，只修改被明确点名的那一部分。',
+        '当用户要求与把手有关的局部调整时，默认先保留现有把手款式、颜色、材质、结构、纹理和细节，只修改被明确点名的那一部分。',
         '如果对用户意图存在歧义，默认选择修改更少、保留更多原始内容的方案。'
       ].join('\n')
     : [
         '高优先级指令：本次只允许围绕用户明确要求的目标部件和修改目标出图，不要主动扩大发挥范围。',
+        '最高原则：只有用户明确说可以改的属性，才允许改；用户没明确说的属性，一律默认不改。',
         '最高原则：宁可少改，也不可多改；宁可局部不完美，也不要擅自改变未被点名的内容。',
-        '如果用户没有明确要求改变某个部分，就不要擅自修改该部分的样式、颜色、材质、结构、纹理或细节。',
+        '如果用户没有明确要求改变某个部分，就不要擅自修改该部分的样式、颜色、材质、结构、纹理、底座、轮廓或细节。',
+        '你必须自己判断用户点名允许改动的是哪一项属性，并把未点名属性视为冻结状态。',
         '除目标部件及其必要衔接区域外，其他门体、门框、玻璃、墙面、背景和光影关系都应尽量保持原样。',
         '不要为了追求整体效果而主动重绘、替换、美化、优化、补全或修正未被点名的内容。',
         '如果某种改动会导致目标部件以外的区域发生明显变化，则应优先缩小改动范围，而不是扩大改动。',
@@ -396,6 +570,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle) {
 
   return [
     '请在保留原始拍摄角度和整体构图的前提下处理这组门业参考图片。',
+    '输出必须是一张完整的整门效果图，不能返回单独的门把手参考图、局部裁切图、拼贴参考图或仅展示局部的图片。',
     `用途：${job.templateType || '门业展示'}`,
     `门类型：${job.doorType || '未指定'}`,
     `目标部件：${targetPartText}`,
@@ -404,10 +579,16 @@ function buildDoorImageInstruction(job, maskBox, handleStyle) {
     imageLines.length ? imageLines.join('\n') : '参考图：未提供多图标记',
     maskInstruction,
     handleStyleInstruction,
+    referenceStyleInstruction,
+    edgeTrimStrictInstruction,
+    auxiliaryReferenceInstruction,
+    structuredReferenceInstruction,
     modifyScopeInstruction,
-    onlyFullDoor
+    !hasHandleDetail && !hasEdgeTrimDetail && !hasColorSample
       ? '当前没有门把手细节照，请先在整门图中识别门把手区域，仅围绕门把手及必要衔接区域做处理，不要改变原门的材质、颜色、纹理、漆面和整体结构。'
-      : [
+      : !hasHandleDetail
+        ? '当前没有门把手细节照，请保持整门图中的现有门把手，不要擅自改变门把手款式、颜色、材质或底座；本次应优先执行已上传参考图对应的包边或颜色任务。'
+        : [
           '高优先级指令：只要输入中包含门把手细节图，本次任务就默认必须执行“把该门把手融合到整门照中”的操作；这是强制目标，不需要等待客户额外说明。',
           '高优先级指令：整门上下文图是最终输出的唯一基底图，必须保留其门扇、门框、材质、颜色、纹理、漆面、表面工艺、光影和整体结构，不得重绘成其他材质或风格。',
           '高优先级指令：任何不属于门把手及其必要衔接区域的变化，都应视为不合格修改，必须避免。',
@@ -535,11 +716,24 @@ async function buildEditArtifacts(job) {
 
   const primaryBuffer = await downloadOriginalImage(primaryImage.originalImageFileID);
   const inputImages = [await createInputImage(primaryImage.originalImageFileID, primaryBuffer, `${primaryImage.slotId || 'full-door'}.png`)];
+  const referenceBuffers = {};
   const handleDetail = getHandleDetailImage(job);
   let handleBuffer = null;
-  if (handleDetail) {
-    handleBuffer = await downloadOriginalImage(handleDetail.originalImageFileID);
-    inputImages.push(await createInputImage(handleDetail.originalImageFileID, handleBuffer, `${handleDetail.slotId || 'handle-detail'}.png`));
+  const referenceImages = getReferenceImages(job);
+  for (const referenceImage of referenceImages) {
+    if (!referenceImage || !referenceImage.originalImageFileID || referenceImage.slotId === 'full-door') {
+      continue;
+    }
+    const referenceBuffer = await downloadOriginalImage(referenceImage.originalImageFileID);
+    referenceBuffers[referenceImage.slotId || referenceImage.originalImageFileID] = referenceBuffer;
+    inputImages.push(await createInputImage(
+      referenceImage.originalImageFileID,
+      referenceBuffer,
+      `${referenceImage.slotId || 'reference'}.png`
+    ));
+    if (handleDetail && referenceImage.slotId === handleDetail.slotId) {
+      handleBuffer = referenceBuffer;
+    }
   }
 
   const primarySize = getImageSize(primaryBuffer, primaryImage.originalImageFileID);
@@ -550,6 +744,8 @@ async function buildEditArtifacts(job) {
   let maskFile = null;
   let detectionMode = 'none';
   let handleStyle = null;
+  const referenceStyles = [];
+  const hasMultiPartReference = referenceImages.some((item) => item && ['edge-trim-detail', 'color-sample'].includes(item.slotId));
   if (handleDetail) {
     try {
       handleStyle = await detectHandleStyle(
@@ -561,27 +757,51 @@ async function buildEditArtifacts(job) {
     } catch (error) {
       console.warn('[worker] vision handle style detection failed', job._id || job.jobId, error && error.message ? error.message : error);
     }
+    if (hasMultiPartReference) {
+      detectionMode = 'multi-part-reference-no-mask';
+    } else {
+      try {
+        maskBox = await detectHandleMaskBox(
+          primaryBuffer,
+          primaryImage.originalImageFileID,
+          handleBuffer,
+          handleDetail.originalImageFileID,
+          primarySize,
+          job
+        );
+      } catch (error) {
+        console.warn('[worker] vision handle detection failed', job._id || job.jobId, error && error.message ? error.message : error);
+      }
+      if (!maskBox) {
+        maskBox = inferHandleMaskBox(primarySize, handleBuffer, job);
+      }
+      if (!maskBox) {
+        throw new Error('未能确定门把手编辑区域');
+      }
+      const maskBuffer = buildHandleMaskBuffer(primarySize.width, primarySize.height, maskBox);
+      maskFile = await createMaskFile(maskBuffer);
+      detectionMode = maskBox.source || 'heuristic';
+    }
+  }
+  for (const referenceImage of referenceImages) {
+    if (!referenceImage || !['edge-trim-detail', 'color-sample'].includes(referenceImage.slotId)) {
+      continue;
+    }
     try {
-      maskBox = await detectHandleMaskBox(
-        primaryBuffer,
-        primaryImage.originalImageFileID,
-        handleBuffer,
-        handleDetail.originalImageFileID,
-        primarySize,
-        job
+      const style = await detectReferenceStyle(
+        referenceImage,
+        referenceBuffers[referenceImage.slotId]
       );
+      if (style) {
+        referenceStyles.push(style);
+      }
     } catch (error) {
-      console.warn('[worker] vision handle detection failed', job._id || job.jobId, error && error.message ? error.message : error);
+      console.warn('[worker] vision reference style detection failed', {
+        jobId: job._id || job.jobId,
+        slotId: referenceImage.slotId,
+        message: error && error.message ? error.message : error
+      });
     }
-    if (!maskBox) {
-      maskBox = inferHandleMaskBox(primarySize, handleBuffer, job);
-    }
-    if (!maskBox) {
-      throw new Error('未能确定门把手编辑区域');
-    }
-    const maskBuffer = buildHandleMaskBuffer(primarySize.width, primarySize.height, maskBox);
-    maskFile = await createMaskFile(maskBuffer);
-    detectionMode = maskBox.source || 'heuristic';
   }
 
   console.log('[worker] downloaded edit artifacts', job._id || job.jobId, {
@@ -590,7 +810,8 @@ async function buildEditArtifacts(job) {
     primarySize,
     detectionMode,
     maskBox,
-    handleStyle
+    handleStyle,
+    referenceStyles
   });
 
   return {
@@ -598,7 +819,8 @@ async function buildEditArtifacts(job) {
     maskFile,
     maskBox,
     detectionMode,
-    handleStyle
+    handleStyle,
+    referenceStyles
   };
 }
 
@@ -683,7 +905,12 @@ async function processJob(jobId) {
     maskBox: editArtifacts.maskBox,
     detectionMode: editArtifacts.detectionMode
   });
-  const prompt = buildDoorImageInstruction(job, editArtifacts.maskBox, editArtifacts.handleStyle);
+  const prompt = buildDoorImageInstruction(
+    job,
+    editArtifacts.maskBox,
+    editArtifacts.handleStyle,
+    editArtifacts.referenceStyles
+  );
   console.log('[worker] built prompt', {
     jobId,
     hasHandleDetail: !!getHandleDetailImage(job),
@@ -691,7 +918,8 @@ async function processJob(jobId) {
     hasMask: !!editArtifacts.maskFile,
     detectionMode: editArtifacts.detectionMode,
     maskBox: editArtifacts.maskBox,
-    handleStyle: editArtifacts.handleStyle
+    handleStyle: editArtifacts.handleStyle,
+    referenceStyles: editArtifacts.referenceStyles
   });
   const response = await requestEditedImage(jobId, editArtifacts.inputImages, prompt, {
     mask: editArtifacts.maskFile
