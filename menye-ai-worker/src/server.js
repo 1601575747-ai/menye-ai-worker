@@ -457,6 +457,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const allowEdgeTrimColorChange = /包边.*颜色|颜色.*包边|门套.*颜色|颜色.*门套|收口.*颜色|颜色.*收口/.test(requirementText);
   const allowEdgeTrimStyleChange = /更换包边|更改包边|改变包边|包边款式|包边造型|包边结构|门套线.*样式|收口条.*样式/.test(requirementText);
   const allowEdgeTrimRemoveChange = /去掉包边|删除包边|取消包边|不要包边|去掉门套线|删除门套线|取消门套线|不要门套线/.test(requirementText);
+  const hasEdgeTrimOnlyReference = hasEdgeTrimDetail && !hasHandleDetail && !hasColorSample;
   const targetParts = Array.isArray(job.targetParts)
     ? job.targetParts.map((item) => {
         if (item === 'handle') {
@@ -509,6 +510,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '高优先级指令：只要输入中包含包边细节图，本次任务就默认必须执行“把该包边融合/替换到整门照中”的操作；这是强制目标，不需要等待客户额外说明。',
         '任务目标：请先在整门照中识别原有包边、门套线、门框内外侧收口条、压线和边缘收口区域，再把包边细节图中的包边款式融合到这些对应位置。',
         '最终输出必须是一张已经使用参考包边后的完整整门效果图，不能只是把包边细节图当作颜色参考，也不能保留与参考图不一致的原包边。',
+        '最高优先级限制：包边替换不是整门换款。只允许修改包边、门套线、收口条、压线和其极小衔接边缘；门扇主体、门板花纹、门型比例、玻璃、门芯造型、门面颜色、五金把手、墙面和背景必须保持整门照原样。',
+        '如果模型需要在“更完整地替换包边”和“保持门样式不变”之间取舍，必须优先保持门样式不变，只做更小范围的包边融合。',
         '最终成图中的包边必须优先保持包边细节图的颜色、材质、表面质感、宽窄比例、截面层次、凹凸倒角、收边方式、线条、纹理和关键装饰细节。',
         allowEdgeTrimColorChange
           ? '用户这次明确要求调整包边颜色，因此包边颜色可以按用户要求改变；但包边材质观感、宽窄比例、截面层次、线条结构和关键细节仍应保持与包边细节图一致。'
@@ -532,6 +535,14 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、背景或其他未点名内容。'
       : ''
   ].filter(Boolean).join('\n');
+  const edgeTrimOnlyFreezeInstruction = hasEdgeTrimOnlyReference
+    ? [
+        '本次只有包边细节参考图，没有门把手细节图或颜色参考图。',
+        '因此本次唯一允许变化的对象是包边/门套线/收口条/压线区域。',
+        '禁止改变门扇样式、门板纹理、门板颜色、门型结构、开门比例、玻璃形状、门把手、锁体、背景和整体构图。',
+        '输出应看起来像在原整门照上只更换了包边，而不是重新生成了一扇门。'
+      ].join('\n')
+    : '';
   const structuredReferenceInstruction = [
     hasHandleDetail
       ? '结构化需求确认：客户上传了门把手细节图，因此“更换/融合门把手”本身已经是明确需求。'
@@ -582,6 +593,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     referenceStyleInstruction,
     edgeTrimStrictInstruction,
     auxiliaryReferenceInstruction,
+    edgeTrimOnlyFreezeInstruction,
     structuredReferenceInstruction,
     modifyScopeInstruction,
     !hasHandleDetail && !hasEdgeTrimDetail && !hasColorSample
