@@ -457,7 +457,6 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const allowEdgeTrimColorChange = /包边.*颜色|颜色.*包边|门套.*颜色|颜色.*门套|收口.*颜色|颜色.*收口/.test(requirementText);
   const allowEdgeTrimStyleChange = /更换包边|更改包边|改变包边|包边款式|包边造型|包边结构|门套线.*样式|收口条.*样式/.test(requirementText);
   const allowEdgeTrimRemoveChange = /去掉包边|删除包边|取消包边|不要包边|去掉门套线|删除门套线|取消门套线|不要门套线/.test(requirementText);
-  const hasEdgeTrimOnlyReference = hasEdgeTrimDetail && !hasHandleDetail && !hasColorSample;
   const targetParts = Array.isArray(job.targetParts)
     ? job.targetParts.map((item) => {
         if (item === 'handle') {
@@ -481,6 +480,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const hasHandleDetail = referenceImages.some((item) => item.slotId === 'handle-detail');
   const hasEdgeTrimDetail = referenceImages.some((item) => item.slotId === 'edge-trim-detail');
   const hasColorSample = referenceImages.some((item) => item.slotId === 'color-sample');
+  const hasEdgeTrimOnlyReference = hasEdgeTrimDetail && !hasHandleDetail && !hasColorSample;
   const maskInstruction = maskBox
     ? `系统检测到门把手编辑区域：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。本次只允许在该区域及极小衔接边缘内编辑。`
     : `本次未启用区域 mask，请仅围绕目标部件（${targetPartText}）及必要衔接区域做处理，不要扩散到背景、墙面或其他未点名区域。`;
