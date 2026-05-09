@@ -15,6 +15,7 @@ const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || '';
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 180000);
 const OPENAI_IMAGE_TIMEOUT_MS = Number(process.env.OPENAI_IMAGE_TIMEOUT_MS || OPENAI_TIMEOUT_MS);
 const CLOUDBASE_TIMEOUT_MS = Number(process.env.CLOUDBASE_TIMEOUT_MS || 60000);
+const CLOUDBASE_UPLOAD_TIMEOUT_MS = Number(process.env.CLOUDBASE_UPLOAD_TIMEOUT_MS || 90000);
 const WORKER_SHARED_SECRET = process.env.WORKER_SHARED_SECRET;
 const PORT = Number(process.env.PORT || 3000);
 
@@ -964,14 +965,16 @@ async function uploadResult(jobId, version, buffer) {
     jobId,
     cloudPath,
     bytes: buffer ? buffer.length : 0,
-    timeoutMs: CLOUDBASE_TIMEOUT_MS
+    timeoutMs: CLOUDBASE_UPLOAD_TIMEOUT_MS,
+    maxAttempts: 2,
+    totalTimeoutMs: CLOUDBASE_UPLOAD_TIMEOUT_MS * 2
   });
   const result = await retryOperation('上传结果图', () => withTimeout(
     app.uploadFile({
       cloudPath,
       fileContent: buffer
     }),
-    CLOUDBASE_TIMEOUT_MS,
+    CLOUDBASE_UPLOAD_TIMEOUT_MS,
     '上传结果图'
   ), 2);
   return result.fileID;
