@@ -165,6 +165,35 @@ function getReferenceSlotLabel(slotId) {
   }
 }
 
+function getPromptDecisionSummary(job) {
+  const requirementText = job && job.requirement ? String(job.requirement) : '';
+  const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
+  const referenceImages = getReferenceImages(job);
+  const hasEdgeTrimDetail = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail');
+  const hasColorSample = referenceImages.some((item) => item && item.slotId === 'color-sample');
+  const userWantsEdgeTrimDoorColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:同门|跟门|与门|和门|门体|门扇|整门)[^。；，,.]{0,24}(?:同色|一样|一致|统一)|(?:门体|门扇|整门)[^。；，,.]{0,24}(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:同色|一样|一致|统一)/.test(requirementText);
+  const userSpecifiedEdgeTrimColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:改成|换成|调成|做成|改为|设为|使用|用)[^。；，,.]{0,24}(?:颜色|色|黑|白|灰|棕|木|金|银|红|黄|蓝|绿|深|浅)|(?:黑色|白色|灰色|棕色|木色|金色|银色|深色|浅色)[^。；，,.]{0,24}(?:包边|门套|收口|压线)/.test(requirementText);
+  const userWantsEdgeTrimReferenceColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:按|跟随|参考|保留|保持|使用|用)[^。；，,.]{0,28}(?:包边参考图|参考图|原图)[^。；，,.]{0,16}(?:颜色|色|固有色)|(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:不要|不跟|不同|独立|单独|另外|另做)[^。；，,.]{0,28}(?:同门|跟门|门体|门扇|整门|同色|统一|颜色|色)/.test(requirementText);
+  const userWantsEdgeTrimPreserveColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:颜色|色|原色|本色|自身颜色|当前颜色|现在颜色)[^。；，,.]{0,16}(?:保持不变|不变|别变|不要变|不能变|保留|维持|锁定|不改|不要改|原样)|(?:保持不变|不变|别变|不要变|不能变|保留|维持|锁定|不改|不要改|原样)[^。；，,.]{0,24}(?:包边|门套|收口|压线)[^。；，,.]{0,16}(?:颜色|色|原色|本色|自身颜色|当前颜色|现在颜色)|(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:保留|保持|用|使用)[^。；，,.]{0,16}(?:原色|本色|自身颜色|当前颜色|现在颜色|原包边颜色)/.test(requirementText);
+  const userWantsIndependentEdgeTrimColor = !userWantsEdgeTrimDoorColor && (userSpecifiedEdgeTrimColor || userWantsEdgeTrimReferenceColor || userWantsEdgeTrimPreserveColor);
+  const allowDoorSurfaceColorChange = hasColorSample || /门.*颜色|颜色.*门|颜色参考|色号|改色|换色|调色|变色|颜色不对|颜色再|颜色偏|YM[-\w]*/i.test(requirementText);
+  return {
+    requirementText,
+    backgroundInfo,
+    hasEdgeTrimDetail,
+    hasColorSample,
+    userWantsEdgeTrimDoorColor,
+    userSpecifiedEdgeTrimColor,
+    userWantsEdgeTrimReferenceColor,
+    userWantsEdgeTrimPreserveColor,
+    edgeTrimPreserveMeansReferenceColor: hasEdgeTrimDetail && userWantsEdgeTrimPreserveColor,
+    userWantsIndependentEdgeTrimColor,
+    edgeTrimColorProtectedFromColorSample: hasEdgeTrimDetail && userWantsIndependentEdgeTrimColor,
+    colorSampleAppliesToEdgeTrim: hasColorSample && !(hasEdgeTrimDetail && userWantsIndependentEdgeTrimColor),
+    allowDoorSurfaceColorChange
+  };
+}
+
 function getReferenceStylePrompt(slotId) {
   switch (slotId) {
     case 'edge-trim-detail':
@@ -517,7 +546,7 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
   const useEdgeTrimReferenceColor = !!(options && options.useEdgeTrimReferenceColor);
   const preserveEdgeTrimColor = !!(options && options.preserveEdgeTrimColor);
   const edgeTrimColorFallback = preserveEdgeTrimColor
-    ? '最终包边颜色按客户“保持不变/原色”语义执行，优先保留第一张整门图/当前输入图中的原包边颜色。'
+    ? '最终包边颜色按客户“保持不变/原色”语义执行；如已上传包边参考图，则保持包边参考图中包边自身的可见颜色。'
     : '最终包边颜色跟门体/颜色参考图统一。';
   return styles.map((style) => (
     style.slotId === 'edge-trim-detail' && !useEdgeTrimReferenceColor
@@ -566,6 +595,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const hasHandleDetail = referenceImages.some((item) => item.slotId === 'handle-detail');
   const hasEdgeTrimDetail = referenceImages.some((item) => item.slotId === 'edge-trim-detail');
   const hasColorSample = referenceImages.some((item) => item.slotId === 'color-sample');
+  const edgeTrimPreserveMeansReferenceColor = hasEdgeTrimDetail && userWantsEdgeTrimPreserveColor;
   const edgeTrimColorProtectedFromColorSample = hasEdgeTrimDetail && userWantsIndependentEdgeTrimColor;
   const colorSampleAppliesToEdgeTrim = hasColorSample && !edgeTrimColorProtectedFromColorSample;
   const isCutoutRequest = /抠图|扣图|扣出来|抠出来|单独抠|单独扣|单独.*出来|白底|透明底|去背景|去掉背景|去除背景/.test(`${requirementText} ${backgroundInfo}`);
@@ -589,8 +619,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? '门把手颜色、材质、主体造型、底座结构和关键细节都必须以门把手细节图为准；如果用户明确要求改变其中某项，则只改那一项。'
       : '当前没有门把手细节图，请只在整门图中识别现有门把手；除非用户明确要求，不要擅自改变门把手款式、颜色、材质、底座结构或关键细节。';
   const referenceStyleInstruction = buildReferenceStyleInstruction(referenceStyles, {
-    useEdgeTrimReferenceColor: userWantsIndependentEdgeTrimColor && !userWantsEdgeTrimPreserveColor,
-    preserveEdgeTrimColor: userWantsEdgeTrimPreserveColor
+    useEdgeTrimReferenceColor: userWantsIndependentEdgeTrimColor && !(!hasEdgeTrimDetail && userWantsEdgeTrimPreserveColor),
+    preserveEdgeTrimColor: edgeTrimPreserveMeansReferenceColor
   });
   const edgeTrimStyle = Array.isArray(referenceStyles)
     ? referenceStyles.find((style) => style && style.slotId === 'edge-trim-detail')
@@ -609,9 +639,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     hasHandleDetail ? '门把手：必须按门把手细节图融合/替换' : '',
     hasEdgeTrimDetail ? '包边：必须识别包边参考图中的包边结构并产生可见融合/替换效果，不能保留原包边不变' : '',
     hasColorSample
-      ? (edgeTrimColorProtectedFromColorSample
-        ? (userWantsEdgeTrimPreserveColor
-          ? '门体颜色：必须按颜色参考图调整门扇/门体可见表面颜色和材质观感；包边因客户明确要求颜色保持不变，必须保留第一张整门图/当前输入图中的原包边颜色，不参与门体统一颜色'
+        ? (edgeTrimColorProtectedFromColorSample
+        ? (edgeTrimPreserveMeansReferenceColor
+          ? '门体颜色：必须按颜色参考图调整门扇/门体可见表面颜色和材质观感；包边因客户明确要求颜色保持不变，必须保持包边参考图中包边自身的可见颜色，不参与门体统一颜色'
           : '门体颜色：必须按颜色参考图调整门扇/门体可见表面颜色和材质观感；包边因客户明确要求独立颜色，按客户包边颜色或包边参考图颜色执行')
         : '整门颜色：默认必须按颜色参考图统一调整整门可见门面颜色和材质观感，包含包边/门套同色；如补充要求指定局部不同颜色，则按指定部件优先')
       : ''
@@ -629,8 +659,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const edgeTrimIndependentColorInstruction = edgeTrimColorProtectedFromColorSample
     ? [
         '包边颜色独立意图解释：客户说“包边按参考图颜色”“包边单独颜色”“包边颜色保持不变”“包边颜色不要跟门走”等，都应理解为包边颜色不参与默认同门同色，不被颜色参考图或门体统一颜色覆盖。',
-        userWantsEdgeTrimPreserveColor
-          ? '本次文字更接近“包边颜色保持不变”，因此优先保留第一张整门图/当前输入图中的原包边颜色；只更换包边结构、宽窄、层次和线条。'
+        edgeTrimPreserveMeansReferenceColor
+          ? '本次已上传包边参考图，且文字更接近“包边颜色保持不变”，这里的“不变”指保持包边参考图中包边自身的可见颜色；不要理解成保留主门旧包边颜色。'
           : '如果客户指定了具体色名或色号，就按客户指定；如果客户说按包边参考图颜色，就按包边参考图；如果只说包边单独/不要同门，则由 AI 根据客户语义和上传参考图判断最合理的独立包边颜色，但绝不能自动拉成门体颜色。',
         '无论包边颜色如何独立，包边结构仍必须来自包边参考图，门扇主体结构必须来自第一张整门图。'
       ].join('\n')
@@ -641,8 +671,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
           ? '强制执行顺序：先锁定第一张整门图的门型几何、门扇比例、线条位置和把手位置，再按包边参考图处理包边层，再按颜色参考图处理门体颜色层，最后才处理背景/白底。'
           : '强制执行顺序：先锁定第一张整门图的门型几何、门扇比例、线条位置、门体原始颜色和把手位置，再按包边参考图处理包边层，最后才处理背景/白底；本次没有颜色参考图，不存在门体颜色层。',
         edgeTrimColorProtectedFromColorSample
-          ? (userWantsEdgeTrimPreserveColor
-            ? '后执行的任务不能覆盖先执行的任务：客户已经明确要求包边颜色保持不变，因此颜色任务不能把包边统一成门体颜色，也不能用颜色参考图或包边参考图改变包边颜色；背景/白底任务不能删除、变浅、简化或重画包边。'
+          ? (edgeTrimPreserveMeansReferenceColor
+            ? '后执行的任务不能覆盖先执行的任务：客户已经明确要求包边颜色保持不变，因此颜色任务不能把包边统一成门体颜色；包边颜色应保持包边参考图自身可见颜色，背景/白底任务不能删除、变浅、简化或重画包边。'
             : '后执行的任务不能覆盖先执行的任务：客户已经明确要求包边独立颜色，因此颜色任务不能把包边统一成门体颜色；背景/白底任务不能删除、变浅、简化或重画包边。')
           : (hasColorSample
             ? '后执行的任务不能覆盖先执行的任务：颜色任务默认要覆盖门扇、门体、包边、门套、收口条、压线和同门体侧边的可见门面颜色，使包边与门体同色；但不能改变包边参考图提供的宽窄、层次、线条和收边结构；背景/白底任务不能删除、变浅、简化或重画包边。'
@@ -684,15 +714,15 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '包边未执行失败判定：如果最终图的包边/门套线/收口条/压线看起来仍是第一张整门图原来的结构，没有体现参考图的宽窄、层次、截面、线条或收边方式，也属于失败。',
         edgeTrimStyle && edgeTrimStyle.applyDescription
           ? (userWantsIndependentEdgeTrimColor
-            ? (userWantsEdgeTrimPreserveColor
-              ? '包边执行描述：只迁移包边参考图的结构、宽窄、层次、线条、纹理走向和收边方式；忽略包边参考图颜色，最终包边颜色必须保持第一张整门图/当前输入图中的原包边颜色。'
+            ? (edgeTrimPreserveMeansReferenceColor
+              ? `包边执行描述：${edgeTrimStyle.applyDescription}。这里的“颜色保持不变”指保持该包边参考图中的包边自身颜色。`
               : `包边执行描述：${edgeTrimStyle.applyDescription}。`)
             : '包边执行描述：只迁移包边参考图的结构、宽窄、层次、线条、纹理走向和收边方式；忽略包边参考图颜色，最终包边颜色跟门体/颜色参考图统一。')
           : '',
         '最终成图中的包边必须优先保持包边参考图中“门洞周围包边区域”的宽窄比例、截面层次、凹凸倒角、收边方式、线条、纹理走向和关键装饰细节。',
         userWantsIndependentEdgeTrimColor
-          ? (userWantsEdgeTrimPreserveColor
-            ? '客户这次明确要求包边颜色保持不变，因此包边结构可以按包边参考图更换，但包边颜色必须保留第一张整门图/当前输入图中的原包边颜色；不要改成门体颜色、颜色参考图颜色或包边参考图颜色。'
+          ? (edgeTrimPreserveMeansReferenceColor
+            ? '客户这次明确要求包边颜色保持不变，因此包边结构和颜色都应来自包边参考图中的包边区域；不要改成门体颜色或颜色参考图颜色，也不要保留主门旧包边颜色。'
             : '客户这次明确要求包边使用独立颜色或按包边参考图颜色，因此包边颜色可以不同于门体；但包边结构、宽窄比例、截面层次、线条和关键细节仍应保持与包边参考图一致。')
           : (allowDoorSurfaceColorChange
             ? '默认规则：包边颜色必须跟门扇/门体同色。包边参考图默认不决定最终包边颜色，只决定包边结构、宽窄、层次、线条和收边方式；如果上传了颜色参考图，包边也应随整门一起使用该颜色参考图的颜色。'
@@ -711,15 +741,15 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       : '',
     hasColorSample
       ? (edgeTrimColorProtectedFromColorSample
-        ? (userWantsEdgeTrimPreserveColor
-          ? '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别主色、色偏、纹理和表面质感，并默认按该颜色参考图调整门扇/门体可见表面颜色；不需要客户额外说明“改成这个颜色”。本次客户明确要求包边颜色保持不变，因此颜色参考图不得作用到包边。'
+        ? (edgeTrimPreserveMeansReferenceColor
+          ? '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别主色、色偏、纹理和表面质感，并默认按该颜色参考图调整门扇/门体可见表面颜色；不需要客户额外说明“改成这个颜色”。本次客户明确要求包边颜色保持不变，因此颜色参考图不得作用到包边，包边颜色保持包边参考图自身可见颜色。'
           : '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别主色、色偏、纹理和表面质感，并默认按该颜色参考图调整门扇/门体可见表面颜色；不需要客户额外说明“改成这个颜色”。本次客户表达了包边颜色独立意图，因此包边颜色由 AI 根据客户语义判断，不参与整门统一颜色。')
         : '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别主色、色偏、纹理和表面质感，并默认按该颜色参考图统一调整整门可见门面颜色，包含包边/门套同色；不需要客户额外说明“改成这个颜色”。如果补充要求明确写了不同部件不同颜色，则按局部指定优先。')
       : '',
     hasEdgeTrimDetail || hasColorSample
       ? (edgeTrimColorProtectedFromColorSample
-        ? (userWantsEdgeTrimPreserveColor
-          ? '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、门扇样式、背景或其他未点名内容。多张参考图同时存在时，必须像图层编辑一样分别执行：包边层只改包边结构但保留原包边颜色，颜色层只改门扇/门体可见表面，背景层只改背景；包边颜色保持不变的要求优先于整门同色。'
+        ? (edgeTrimPreserveMeansReferenceColor
+          ? '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、门扇样式、背景或其他未点名内容。多张参考图同时存在时，必须像图层编辑一样分别执行：包边层改包边结构并保持包边参考图自身颜色，颜色层只改门扇/门体可见表面，背景层只改背景；包边颜色保持不变的要求优先于整门同色。'
           : '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、门扇样式、背景或其他未点名内容。多张参考图同时存在时，必须像图层编辑一样分别执行：包边层只改包边结构并按客户语义判断包边独立颜色，颜色层只改门扇/门体可见表面，背景层只改背景；包边独立颜色不要被统一颜色覆盖。')
         : (hasColorSample
           ? '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、门扇样式、背景或其他未点名内容。多张参考图同时存在时，必须像图层编辑一样分别执行：包边层只改包边结构，颜色层默认统一整门可见门面颜色并包含包边同色，背景层只改背景；如果用户给某个部件指定了不同颜色，则该部件不要被统一颜色覆盖。'
@@ -1289,6 +1319,7 @@ async function processJob(jobId) {
     hasColorSample: getReferenceImages(job).some((item) => item && item.slotId === 'color-sample'),
     referenceSlots: getReferenceImages(job).map((item) => item && item.slotId).filter(Boolean),
     referenceImageCount: getReferenceImages(job).length,
+    promptDecision: getPromptDecisionSummary(job),
     hasMask: !!editArtifacts.maskFile,
     detectionMode: editArtifacts.detectionMode,
     maskBox: editArtifacts.maskBox,
