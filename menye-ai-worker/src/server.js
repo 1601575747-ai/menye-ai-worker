@@ -12,6 +12,8 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
 const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4.1-mini';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || '';
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 180000);
+const OPENAI_IMAGE_TIMEOUT_MS = Number(process.env.OPENAI_IMAGE_TIMEOUT_MS || OPENAI_TIMEOUT_MS);
 const WORKER_SHARED_SECRET = process.env.WORKER_SHARED_SECRET;
 const PORT = Number(process.env.PORT || 3000);
 
@@ -42,6 +44,7 @@ const OpenAIClient = openaiModule.default || openaiModule;
 const toFile = openaiModule.toFile;
 const openai = isConfigured ? new OpenAIClient({
   apiKey: OPENAI_API_KEY,
+  timeout: OPENAI_TIMEOUT_MS,
   ...(OPENAI_BASE_URL ? { baseURL: OPENAI_BASE_URL } : {})
 }) : null;
 
@@ -979,12 +982,33 @@ async function readImageResponseBody(response) {
 }
 
 function shouldRetryImageApi(error) {
-  return !!(error && error.status === 502 && error.type === 'upstream_error');
+  if (!error) {
+    return false;
+  }
+  if (error.status === 408 || error.status === 409 || error.status === 429) {
+    return true;
+  }
+  if (error.status >= 500) {
+    return true;
+  }
+  return /timeout|timed out|socket hang up|ECONNRESET|ETIMEDOUT|fetch failed/i.test(error.message || '');
+}
+
+function summarizeOpenAIError(error) {
+  return {
+    name: error && error.name ? error.name : '',
+    status: error && error.status ? error.status : '',
+    type: error && error.type ? error.type : '',
+    code: error && error.code ? error.code : '',
+    requestID: error && error.requestID ? error.requestID : '',
+    message: error && error.message ? error.message : String(error || '')
+  };
 }
 
 async function requestEditedImage(jobId, inputImages, prompt, options) {
   const requestOptions = options || {};
   for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const startedAt = Date.now();
     try {
       console.log('[worker] calling image api', {
         jobId,
@@ -993,21 +1017,39 @@ async function requestEditedImage(jobId, inputImages, prompt, options) {
         hasMask: !!requestOptions.mask,
         baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
         model: OPENAI_IMAGE_MODEL,
-        visionModel: OPENAI_VISION_MODEL
+        visionModel: OPENAI_VISION_MODEL,
+        timeoutMs: OPENAI_IMAGE_TIMEOUT_MS
       });
-      return await openai.images.edit({
+      const response = await openai.images.edit({
         model: OPENAI_IMAGE_MODEL,
         image: inputImages,
         ...(requestOptions.mask ? { mask: requestOptions.mask } : {}),
         prompt,
         size: '1024x1024'
+      }, {
+        timeout: OPENAI_IMAGE_TIMEOUT_MS
       });
+      console.log('[worker] image api returned', {
+        jobId,
+        attempt,
+        elapsedMs: Date.now() - startedAt
+      });
+      return response;
     } catch (error) {
+      const errorSummary = summarizeOpenAIError(error);
+      console.warn('[worker] image api failed', {
+        jobId,
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+        baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
+        model: OPENAI_IMAGE_MODEL,
+        ...errorSummary
+      });
       if (attempt === 1 && shouldRetryImageApi(error)) {
-        console.warn('[worker] retrying image api after upstream 502', {
+        console.warn('[worker] retrying image api after retryable error', {
           jobId,
-          requestID: error.requestID || '',
-          message: error.message
+          requestID: errorSummary.requestID,
+          message: errorSummary.message
         });
         continue;
       }
