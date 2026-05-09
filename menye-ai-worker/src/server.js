@@ -438,6 +438,12 @@ async function detectReferenceStyle(referenceImage, referenceBuffer) {
     label: getReferenceSlotLabel(referenceImage.slotId),
     part: parsed.part || getReferenceSlotLabel(referenceImage.slotId),
     color: parsed.color || '',
+    colorFamily: parsed.colorFamily || '',
+    undertone: parsed.undertone || '',
+    brightness: parsed.brightness || '',
+    saturation: parsed.saturation || '',
+    hueLock: parsed.hueLock || '',
+    toneLock: parsed.toneLock || '',
     material: parsed.material || '',
     finish: parsed.finish || '',
     shape: parsed.shape || '',
@@ -492,6 +498,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const hasEdgeTrimDetail = referenceImages.some((item) => item.slotId === 'edge-trim-detail');
   const hasColorSample = referenceImages.some((item) => item.slotId === 'color-sample');
   const hasEdgeTrimOnlyReference = hasEdgeTrimDetail && !hasHandleDetail && !hasColorSample;
+  const isCutoutRequest = /抠图|扣图|扣出来|抠出来|单独抠|单独扣|单独.*出来|白底|透明底|去背景|去掉背景|去除背景/.test(`${requirementText} ${backgroundInfo}`);
   const maskInstruction = maskBox
     ? `系统检测到门把手编辑区域：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。本次只允许在该区域及极小衔接边缘内编辑。`
     : `本次未启用区域 mask，请仅围绕目标部件（${targetPartText}）及必要衔接区域做处理，不要扩散到背景、墙面或其他未点名区域。`;
@@ -599,6 +606,20 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? '结构化需求确认：客户上传了颜色参考图，因此“按颜色参考约束门体颜色和材质观感”本身已经是明确需求。'
       : ''
   ].filter(Boolean).join('\n');
+  const doorIdentityLockInstruction = [
+    '最高优先级门型锁定：第一张整门上下文图是最终输出的唯一门型基底，不是风格参考图。',
+    '必须保留第一张整门图里的门扇外轮廓、宽高比例、开门方向、门板分割数量、线条位置、凹凸/浮雕/压线结构、玻璃位置、门芯造型、把手位置和门框相对比例。',
+    '包边细节图只约束包边/门套线/收口条/压线区域；颜色参考图只约束门体表面颜色、纹理色差和材质观感；门把手细节图只约束门把手区域。',
+    '如果最终图的门板线条数量、线条位置、门芯造型、门扇比例或把手位置与第一张整门图明显不同，应视为失败结果，必须改回第一张整门图的门型结构。',
+    '不要把第一张整门图重画成另一款门，不要新增或删除门板装饰线，不要把平板门改成浮雕门，也不要把浮雕门改成平板门。'
+  ].join('\n');
+  const cutoutPreservationInstruction = isCutoutRequest
+    ? [
+        '高优先级抠图说明：客户要求抠图、白底或把某一扇门单独扣出来时，含义是从第一张整门图中提取/保留指定门扇并更换背景，不是重新设计一扇新门。',
+        '允许删除未被指定的旁边门扇、墙面、地面或原背景；但被保留的目标门扇必须沿用第一张整门图的门型、门板线条、凹凸结构、比例、把手位置和细节。',
+        '抠图后即使背景变成白底，也不能因为画面更干净而重新生成门板造型、门芯花纹、把手位置或门框结构。'
+      ].join('\n')
+    : '';
   const backgroundInstruction = backgroundInfo
     ? [
         `背景要求：${backgroundInfo}`,
@@ -645,6 +666,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     `补充要求：${job.requirement || '按当前图片处理'}`,
     imageLines.length ? imageLines.join('\n') : '参考图：未提供多图标记',
     maskInstruction,
+    doorIdentityLockInstruction,
+    cutoutPreservationInstruction,
     handleStyleInstruction,
     referenceStyleInstruction,
     requiredReferenceTaskInstruction,
