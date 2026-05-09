@@ -14,6 +14,7 @@ const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4.1-mini';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || '';
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 180000);
 const OPENAI_IMAGE_TIMEOUT_MS = Number(process.env.OPENAI_IMAGE_TIMEOUT_MS || OPENAI_TIMEOUT_MS);
+const CLOUDBASE_TIMEOUT_MS = Number(process.env.CLOUDBASE_TIMEOUT_MS || 60000);
 const WORKER_SHARED_SECRET = process.env.WORKER_SHARED_SECRET;
 const PORT = Number(process.env.PORT || 3000);
 
@@ -64,6 +65,51 @@ function assertConfigured() {
   if (!isConfigured) {
     throw new Error(`缺少环境变量：${missingEnvKeys.join(', ')}`);
   }
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label || '操作'}超时：${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  });
+}
+
+async function retryOperation(label, operation, maxAttempts) {
+  const attempts = maxAttempts || 2;
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const startedAt = Date.now();
+    try {
+      const result = await operation(attempt);
+      if (attempt > 1) {
+        console.log('[worker] operation retry succeeded', {
+          label,
+          attempt,
+          elapsedMs: Date.now() - startedAt
+        });
+      }
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.warn('[worker] operation failed', {
+        label,
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+        message: error && error.message ? error.message : String(error || '')
+      });
+      if (attempt >= attempts) {
+        break;
+      }
+    }
+  }
+  throw lastError;
 }
 
 function signPayload(jobId, timestamp, secret) {
@@ -547,10 +593,11 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     : null;
   const allowDoorSurfaceColorChange = hasColorSample || /门.*颜色|颜色.*门|颜色参考|色号|改色|换色|调色|变色|颜色不对|颜色再|颜色偏|YM[-\w]*/i.test(requirementText);
   const allowBackgroundChange = !!backgroundInfo || isCutoutRequest;
+  const freezeDoorSurfaceColor = !allowDoorSurfaceColorChange;
   const hasEdgeTrimOnlyReference = hasEdgeTrimDetail && !hasHandleDetail && !allowDoorSurfaceColorChange && !allowBackgroundChange && !allowEdgeTrimColorChange;
   const edgeTrimScopeLimitInstruction = allowDoorSurfaceColorChange
     ? '最高优先级限制：包边替换不是整门换款。包边任务只允许修改包边、门套线、收口条、压线和其极小衔接边缘；包边参考图默认只提供包边结构、宽窄、层次、线条和收边方式，包边颜色默认跟门扇/门体同色，并随颜色参考图一起统一；只有客户明确指定包边独立颜色或按包边参考图颜色时，包边颜色才不跟门体同色。门扇主体造型、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯结构、五金把手必须保持整门照原样。严禁为了适配包边而重画门扇。'
-    : '最高优先级限制：包边替换不是整门换款。只允许修改包边、门套线、收口条、压线和其极小衔接边缘；包边参考图默认只提供包边结构、宽窄、层次、线条和收边方式，包边颜色默认匹配第一张整门图的门体颜色；门扇主体、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯造型、门面颜色、五金把手必须保持整门照原样。严禁为了适配包边而重画门扇。';
+    : '最高优先级限制：包边替换不是整门换款。只允许修改包边、门套线、收口条、压线和其极小衔接边缘；包边参考图默认只提供包边结构、宽窄、层次、线条和收边方式，包边颜色默认匹配第一张整门图的门体原始颜色；严禁把门扇/门体颜色改成包边参考图颜色。门扇主体、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯造型、门面颜色、五金把手必须保持整门照原样。严禁为了适配包边而重画门扇。';
   const requiredReferenceTasks = [
     hasHandleDetail ? '门把手：必须按门把手细节图融合/替换' : '',
     hasEdgeTrimDetail ? '包边：必须识别包边参考图中的包边结构并产生可见融合/替换效果，不能保留原包边不变' : '',
@@ -572,13 +619,30 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     : '';
   const layeredTaskOrderInstruction = requiredReferenceTasks.length
     ? [
-        '强制执行顺序：先锁定第一张整门图的门型几何、门扇比例、线条位置和把手位置，再按包边参考图处理包边层，再按颜色参考图处理门体颜色层，最后才处理背景/白底。',
+        hasColorSample
+          ? '强制执行顺序：先锁定第一张整门图的门型几何、门扇比例、线条位置和把手位置，再按包边参考图处理包边层，再按颜色参考图处理门体颜色层，最后才处理背景/白底。'
+          : '强制执行顺序：先锁定第一张整门图的门型几何、门扇比例、线条位置、门体原始颜色和把手位置，再按包边参考图处理包边层，最后才处理背景/白底；本次没有颜色参考图，不存在门体颜色层。',
         edgeTrimColorProtectedFromColorSample
           ? '后执行的任务不能覆盖先执行的任务：客户已经明确要求包边独立颜色，因此颜色任务不能把包边统一成门体颜色；背景/白底任务不能删除、变浅、简化或重画包边。'
-          : '后执行的任务不能覆盖先执行的任务：颜色任务默认要覆盖门扇、门体、包边、门套、收口条、压线和同门体侧边的可见门面颜色，使包边与门体同色；但不能改变包边参考图提供的宽窄、层次、线条和收边结构；背景/白底任务不能删除、变浅、简化或重画包边。',
+          : (hasColorSample
+            ? '后执行的任务不能覆盖先执行的任务：颜色任务默认要覆盖门扇、门体、包边、门套、收口条、压线和同门体侧边的可见门面颜色，使包边与门体同色；但不能改变包边参考图提供的宽窄、层次、线条和收边结构；背景/白底任务不能删除、变浅、简化或重画包边。'
+            : '后执行的任务不能覆盖先执行的任务：本次没有颜色任务，门扇/门体颜色必须保持第一张整门图原样；包边同门同色只能通过调整包边颜色去匹配原门体颜色完成；背景/白底任务不能改变门体颜色，也不能删除、变浅、简化或重画包边。'),
         '最终自检：只要上传了包边参考图，成图中门洞周围必须能清楚看到参考包边的宽窄、层次、线条和收边结构；如果包边仍是原图旧结构、没有可见结构变化、白底后变成无层次的普通边框或消失，视为失败。',
-        '最终自检：只要同时上传包边参考图和颜色参考图，必须同时完成“包边结构来自包边参考图、整门颜色来自颜色参考图且包边默认同门同色”，不能只改颜色而忽略包边结构。'
+        hasColorSample
+          ? '最终自检：只要同时上传包边参考图和颜色参考图，必须同时完成“包边结构来自包边参考图、整门颜色来自颜色参考图且包边默认同门同色”，不能只改颜色而忽略包边结构。'
+          : '最终自检：没有颜色参考图时，最终门扇/门体颜色必须仍然是第一张整门图的原颜色；如果门体被改成包边参考图颜色，视为失败。'
       ].join('\n')
+    : '';
+  const doorSurfaceColorFreezeInstruction = freezeDoorSurfaceColor
+    ? [
+        '最高优先级门体颜色冻结：本次没有上传颜色参考图，也没有客户明确要求改变门体颜色，因此第一张整门图中的门扇/门体颜色必须保持原样。',
+        hasEdgeTrimDetail
+          ? '包边默认跟门同色的含义是：把新包边的颜色调整为第一张整门图里的门体原始颜色；绝对不是把门体颜色改成包边参考图的颜色。'
+          : '',
+        allowBackgroundChange
+          ? '背景白底、白板、去背景或场景调整只允许改变背景、墙面、地面和空间，不得把门扇/门体漂白、提亮、换色或改成包边参考图颜色。'
+          : ''
+      ].filter(Boolean).join('\n')
     : '';
   const edgeTrimStrictInstruction = hasEdgeTrimDetail
     ? [
@@ -591,7 +655,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '最终输出必须是一张已经使用参考包边后的完整整门效果图，不能只是把包边参考图当作颜色参考，也不能保留与参考图不一致的原包边。颜色同门同色时，也必须通过宽窄、层次、截面、线条、倒角、压线或收边方式体现包边已更换。',
         edgeTrimScopeLimitInstruction,
         allowBackgroundChange
-          ? '背景、抠图或白底按客户背景要求执行；但背景变化不能反向改变门扇结构、包边参考任务、门体颜色任务或把手任务。'
+          ? '背景、抠图或白底按客户背景要求执行；但背景变化不能反向改变门扇结构、门体原始颜色、包边参考任务、门体颜色任务或把手任务。'
           : '墙面、地面、背景和整体构图必须保持整门照原样。',
         '如果模型需要在“更完整地替换包边”和“保持门样式不变”之间取舍，必须优先保持门样式不变，只做更小范围的包边融合。',
         '包边融合失败判定：如果最终图出现新的门板分割、新的浮雕花纹、新的把手位置、新的门扇比例或把主门替换成参考门款式，都属于失败，必须退回为第一张整门图的门扇结构。',
@@ -604,7 +668,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '最终成图中的包边必须优先保持包边参考图中“门洞周围包边区域”的宽窄比例、截面层次、凹凸倒角、收边方式、线条、纹理走向和关键装饰细节。',
         userWantsIndependentEdgeTrimColor
           ? '客户这次明确要求包边使用独立颜色或按包边参考图颜色，因此包边颜色可以不同于门体；但包边结构、宽窄比例、截面层次、线条和关键细节仍应保持与包边参考图一致。'
-          : '默认规则：包边颜色必须跟门扇/门体同色。包边参考图默认不决定最终包边颜色，只决定包边结构、宽窄、层次、线条和收边方式；如果上传了颜色参考图，包边也应随整门一起使用该颜色参考图的颜色。',
+          : (allowDoorSurfaceColorChange
+            ? '默认规则：包边颜色必须跟门扇/门体同色。包边参考图默认不决定最终包边颜色，只决定包边结构、宽窄、层次、线条和收边方式；如果上传了颜色参考图，包边也应随整门一起使用该颜色参考图的颜色。'
+            : '默认规则：包边颜色必须匹配第一张整门图的门扇/门体原始颜色。包边参考图默认不决定最终包边颜色，只决定包边结构、宽窄、层次、线条和收边方式；严禁为了让包边同色而把门体改成包边参考图颜色。'),
         allowEdgeTrimStyleChange
           ? '用户这次明确要求改变包边样式，因此可按要求调整样式；但除用户点名变化外，仍应尽量保留其余包边细节。'
           : '不要把包边简化成相似但不同的款式，不要擅自改变包边宽窄、线条、截面、倒角、收边或拼接结构。',
@@ -625,7 +691,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     hasEdgeTrimDetail || hasColorSample
       ? (edgeTrimColorProtectedFromColorSample
         ? '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、门扇样式、背景或其他未点名内容。多张参考图同时存在时，必须像图层编辑一样分别执行：包边层只改包边，颜色层只改门扇/门体可见表面，背景层只改背景；包边独立颜色不要被统一颜色覆盖。'
-        : '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、门扇样式、背景或其他未点名内容。多张参考图同时存在时，必须像图层编辑一样分别执行：包边层只改包边结构，颜色层默认统一整门可见门面颜色并包含包边同色，背景层只改背景；如果用户给某个部件指定了不同颜色，则该部件不要被统一颜色覆盖。')
+        : (hasColorSample
+          ? '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、门扇样式、背景或其他未点名内容。多张参考图同时存在时，必须像图层编辑一样分别执行：包边层只改包边结构，颜色层默认统一整门可见门面颜色并包含包边同色，背景层只改背景；如果用户给某个部件指定了不同颜色，则该部件不要被统一颜色覆盖。'
+          : '包边参考图只用于约束包边结构、宽窄、层次、线条和收边方式；本次没有颜色参考图，因此没有颜色层，不允许因为包边参考图或白底背景而改变门扇/门体颜色。包边颜色默认匹配第一张整门图的原门体颜色，背景层只改背景。'))
       : ''
   ].filter(Boolean).join('\n');
   const colorSampleStrictInstruction = hasColorSample
@@ -692,20 +760,24 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     '最高优先级不可重绘协议：最终图必须沿用第一张整门上下文图中的同一扇门，不能重新画一扇相似的门，不能重新建模，不能替换成商品渲染门。',
     '第一张整门图不是“风格参考”，而是必须被保留的底图。所有修改都必须像在这张底图上做局部修图：只覆盖被允许修改的区域，其他区域应保持原图结构和布局。',
     '绝对冻结项：门扇外轮廓、宽高比例、透视角度、开门方向、门板分割数量、每条装饰线/压线的位置、门芯造型、凹凸深浅、玻璃/镂空位置、把手安装位置、锁体位置、门框和门扇相对比例。',
-    '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域；颜色层按颜色参考图统一调整整门可见门面，默认覆盖包边并让包边跟门体同色；只有客户明确要求包边独立颜色或按包边参考图颜色时，包边颜色才不参与统一；背景层只改背景或抠图白底；把手层只改把手区域。',
+    allowDoorSurfaceColorChange
+      ? '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域；颜色层按颜色参考图统一调整整门可见门面，默认覆盖包边并让包边跟门体同色；只有客户明确要求包边独立颜色或按包边参考图颜色时，包边颜色才不参与统一；背景层只改背景或抠图白底；把手层只改把手区域。'
+      : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并让包边颜色匹配第一张整门图的原门体颜色；本次没有颜色层，门扇/门体颜色不得改变；背景层只改背景或抠图白底；把手层只改把手区域。',
+    freezeDoorSurfaceColor ? '门体颜色冻结项：未上传颜色参考图且未明确要求改门体颜色时，门扇/门体颜色不属于允许变化项；包边同门同色时，只能改包边颜色去匹配第一张整门图的原门体颜色，不能反向改变门体颜色。' : '',
     '如果参考图中的包边、颜色或把手与第一张整门图的门型结构冲突，必须优先保留第一张整门图的门型结构，宁可让局部融合更保守，也不能重画门扇。',
     '失败结果定义：最终图只要出现新的门板线条数量、新的线条位置、新的浮雕/门芯图案、新的门扇比例、新的把手位置、或变成另一扇浅色/深色商品门，就属于失败，必须改回第一张整门图的门型。',
     '不要为了白底、抠图、换颜色、换包边、更干净、更高级、更真实、更协调而重绘门扇主体。'
-  ].join('\n');
+  ].filter(Boolean).join('\n');
   const doorIdentityLockInstruction = [
     '最高优先级门型锁定：第一张整门上下文图是最终输出的唯一门型基底，不是风格参考图，也不是可自由重绘的提示图。',
     '本任务是“基于第一张整门图的局部编辑/换色/换包边”，不是“根据参考图重新生成一扇门”。',
     '必须保留第一张整门图里的门扇外轮廓、宽高比例、开门方向、门板分割数量、线条位置、凹凸/浮雕/压线结构、玻璃位置、门芯造型、把手位置和门框相对比例。',
     '包边参考图只约束包边/门套线/收口条/压线区域的结构、宽窄、层次、线条和收边方式；颜色参考图默认约束整门可见门面颜色、纹理色差和材质观感，包含包边同色；门把手细节图只约束门把手区域；背景文字只约束背景或抠图。',
+    freezeDoorSurfaceColor ? '没有颜色参考图或明确改门色要求时，必须保留第一张整门图的门体原始颜色；包边参考图不能作为门体颜色来源。' : '',
     '如果最终图的门板线条数量、线条位置、门芯造型、门扇比例、把手位置、开门方向或门框比例与第一张整门图明显不同，应视为失败结果，必须改回第一张整门图的门型结构。',
     '不要把第一张整门图重画成另一款门，不要新增或删除门板装饰线，不要把平板门改成浮雕门，也不要把浮雕门改成平板门。',
     '即使用户要求白底、抠图、改颜色或换包边，也只能在第一张整门图的门型结构上完成，不得生成一扇新的商品门。'
-  ].join('\n');
+  ].filter(Boolean).join('\n');
   const cutoutPreservationInstruction = isCutoutRequest
     ? [
         '高优先级抠图说明：客户要求抠图、白底或把某一扇门单独扣出来时，含义是从第一张整门图中提取/保留指定门扇并更换背景，不是重新设计一扇新门。',
@@ -717,7 +789,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     ? [
         `背景要求：${backgroundInfo}`,
         '客户填写了背景信息，因此允许按该背景要求调整门后空间、墙面、地面、光线或场景氛围。',
-        '背景调整只控制背景、空间、墙面、地面、光线或抠图白底效果；不能改变门型结构、门框比例、把手位置，也不能覆盖包边、颜色等其他已明确目标任务。'
+        '背景调整只控制背景、空间、墙面、地面、光线或抠图白底效果；不能改变门型结构、门框比例、把手位置，也不能改变门扇/门体原始颜色或覆盖包边、颜色等其他已明确目标任务。'
       ].join('\n')
     : [
         '背景要求：未填写。',
@@ -766,6 +838,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     `门类型：${job.doorType || '未指定'}`,
     `目标部件：${targetPartText}`,
     backgroundInstruction,
+    doorSurfaceColorFreezeInstruction,
     userRequirementInstruction,
     imageLines.length ? imageLines.join('\n') : '参考图：未提供多图标记',
     maskInstruction,
@@ -854,7 +927,11 @@ function downloadRemoteBuffer(url) {
 }
 
 async function getJob(jobId) {
-  const detail = await collection.doc(jobId).get();
+  const detail = await withTimeout(
+    collection.doc(jobId).get(),
+    CLOUDBASE_TIMEOUT_MS,
+    '读取任务'
+  );
   const data = detail && detail.data;
   if (Array.isArray(data)) {
     return data[0] || null;
@@ -863,22 +940,40 @@ async function getJob(jobId) {
 }
 
 async function updateJob(jobId, data) {
-  await collection.doc(jobId).update(data);
+  await withTimeout(
+    collection.doc(jobId).update(data),
+    CLOUDBASE_TIMEOUT_MS,
+    '更新任务'
+  );
 }
 
 async function downloadOriginalImage(fileID) {
-  const result = await app.downloadFile({
-    fileID
-  });
+  const result = await withTimeout(
+    app.downloadFile({
+      fileID
+    }),
+    CLOUDBASE_TIMEOUT_MS,
+    '下载原图'
+  );
   return result.fileContent;
 }
 
 async function uploadResult(jobId, version, buffer) {
   const cloudPath = getResultCloudPath(jobId, version, 'png');
-  const result = await app.uploadFile({
+  console.log('[worker] uploading result image', {
+    jobId,
     cloudPath,
-    fileContent: buffer
+    bytes: buffer ? buffer.length : 0,
+    timeoutMs: CLOUDBASE_TIMEOUT_MS
   });
+  const result = await retryOperation('上传结果图', () => withTimeout(
+    app.uploadFile({
+      cloudPath,
+      fileContent: buffer
+    }),
+    CLOUDBASE_TIMEOUT_MS,
+    '上传结果图'
+  ), 2);
   return result.fileID;
 }
 
