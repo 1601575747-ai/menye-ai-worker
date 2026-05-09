@@ -496,7 +496,10 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const referenceImages = getReferenceImages(job);
   const imageLines = referenceImages.map((item, index) => {
     const label = getReferenceSlotLabel(item.slotId);
-    return `参考图${index + 1}：${label}`;
+    if (index === 0) {
+      return `参考图${index + 1}：${label}。这是唯一底图和唯一门型来源，最终必须像在这张图上做局部编辑。`;
+    }
+    return `参考图${index + 1}：${label}。这只是对应部件参考，不能作为整门底图或整门款式参考。`;
   });
   const hasHandleDetail = referenceImages.some((item) => item.slotId === 'handle-detail');
   const hasEdgeTrimDetail = referenceImages.some((item) => item.slotId === 'edge-trim-detail');
@@ -532,8 +535,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const allowBackgroundChange = !!backgroundInfo || isCutoutRequest;
   const hasEdgeTrimOnlyReference = hasEdgeTrimDetail && !hasHandleDetail && !allowDoorSurfaceColorChange && !allowBackgroundChange;
   const edgeTrimScopeLimitInstruction = allowDoorSurfaceColorChange
-    ? '最高优先级限制：包边替换不是整门换款。包边任务只允许修改包边、门套线、收口条、压线和其极小衔接边缘；门体表面颜色按颜色参考图或用户文字要求执行；门扇主体造型、门板花纹、门型比例、玻璃、门芯结构、五金把手必须保持整门照原样。'
-    : '最高优先级限制：包边替换不是整门换款。只允许修改包边、门套线、收口条、压线和其极小衔接边缘；门扇主体、门板花纹、门型比例、玻璃、门芯造型、门面颜色、五金把手必须保持整门照原样。';
+    ? '最高优先级限制：包边替换不是整门换款。包边任务只允许修改包边、门套线、收口条、压线和其极小衔接边缘；门体表面颜色按颜色参考图或用户文字要求执行；门扇主体造型、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯结构、五金把手必须保持整门照原样。严禁为了适配包边而重画门扇。'
+    : '最高优先级限制：包边替换不是整门换款。只允许修改包边、门套线、收口条、压线和其极小衔接边缘；门扇主体、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯造型、门面颜色、五金把手必须保持整门照原样。严禁为了适配包边而重画门扇。';
   const requiredReferenceTasks = [
     hasHandleDetail ? '门把手：必须按门把手细节图融合/替换' : '',
     hasEdgeTrimDetail ? '包边：必须识别包边参考图中的包边并融合/替换' : '',
@@ -551,6 +554,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '高优先级指令：包边参考图是包边款式的唯一参考来源，严格程度与门把手细节图相同。',
         '高优先级指令：包边参考图可能是一张包边近景，也可能是一整扇门。无论是哪一种，都只能从中提取门洞周围的包边、门套线、收口条、压线、外框边缘和收边方式。',
         '禁止从包边参考图中迁移门扇主体、门芯造型、门板分割、门板花纹、玻璃、把手、锁体、门扇颜色或整门款式；参考图里那扇门不是要替换的门，只是包边来源。',
+        '如果包边参考图是一整扇门，必须把它当作“包边取样图”，不能把它当作“新门样式图”。不要让最终门扇变成包边参考图中的那扇门。',
         '高优先级指令：只要输入中包含包边参考图，本次任务就默认必须执行“把该参考包边融合/替换到整门照中”的操作；这是强制目标，不需要等待客户额外说明。',
         '任务目标：请先在整门照中识别原有包边、门套线、门框内外侧收口条、压线和边缘收口区域，再把包边参考图中的包边款式融合到这些对应位置。',
         '最终输出必须是一张已经使用参考包边后的完整整门效果图，不能只是把包边参考图当作颜色参考，也不能保留与参考图不一致的原包边。',
@@ -559,6 +563,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
           ? '背景、抠图或白底按客户背景要求执行；但背景变化不能反向改变门扇结构、包边参考任务、门体颜色任务或把手任务。'
           : '墙面、地面、背景和整体构图必须保持整门照原样。',
         '如果模型需要在“更完整地替换包边”和“保持门样式不变”之间取舍，必须优先保持门样式不变，只做更小范围的包边融合。',
+        '包边融合失败判定：如果最终图出现新的门板分割、新的浮雕花纹、新的把手位置、新的门扇比例或把主门替换成参考门款式，都属于失败，必须退回为第一张整门图的门扇结构。',
         edgeTrimStyle && edgeTrimStyle.applyDescription
           ? `包边执行描述：${edgeTrimStyle.applyDescription}。`
           : '',
@@ -582,7 +587,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别门体主色、色偏、纹理和表面质感，并默认按该颜色参考图调整门体颜色；不需要客户额外说明“改成这个颜色”。'
       : '',
     hasEdgeTrimDetail || hasColorSample
-      ? '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、门扇样式、背景或其他未点名内容。'
+      ? '包边参考图和颜色参考图只用于约束对应部件；除非用户明确要求，不要因为这些参考图顺带改变门把手、门型结构、门扇样式、背景或其他未点名内容。多张参考图同时存在时，必须像图层编辑一样分别执行：包边层只改包边，颜色层只改门体表面颜色，背景层只改背景。'
       : ''
   ].filter(Boolean).join('\n');
   const colorSampleStrictInstruction = colorSampleStyle
@@ -596,8 +601,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '必须保持参考色的色相、冷暖色偏、明度和饱和度关系。允许为了贴合原图光影做极轻微明暗过渡，但不能改变材料固有色。',
         '如果整门照环境光会让颜色看起来偏色，应优先校正门体固有色，使最终视觉上更接近颜色参考图，而不是完全服从环境光。',
         hasEdgeTrimDetail
-          ? '颜色任务只允许调整门体表面颜色、纹理色差和必要材质观感；包边另按包边参考图执行；门型结构、门板线条、玻璃、把手和门框比例必须保持整门照原样。'
-          : '只允许调整门体表面颜色、纹理色差和必要材质观感；门型结构、门板线条、玻璃、把手、包边和门框比例必须保持整门照原样。',
+          ? '颜色任务只允许调整门体表面颜色、纹理色差和必要材质观感；包边另按包边参考图执行；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手和门框比例必须保持整门照原样。'
+          : '只允许调整门体表面颜色、纹理色差和必要材质观感；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手、包边和门框比例必须保持整门照原样。',
         allowBackgroundChange
           ? '背景、抠图或白底按客户背景要求执行；颜色任务不能与背景任务互相覆盖。'
           : '墙面、地面、背景和整体构图必须保持整门照原样。',
@@ -625,11 +630,13 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       : ''
   ].filter(Boolean).join('\n');
   const doorIdentityLockInstruction = [
-    '最高优先级门型锁定：第一张整门上下文图是最终输出的唯一门型基底，不是风格参考图。',
+    '最高优先级门型锁定：第一张整门上下文图是最终输出的唯一门型基底，不是风格参考图，也不是可自由重绘的提示图。',
+    '本任务是“基于第一张整门图的局部编辑/换色/换包边”，不是“根据参考图重新生成一扇门”。',
     '必须保留第一张整门图里的门扇外轮廓、宽高比例、开门方向、门板分割数量、线条位置、凹凸/浮雕/压线结构、玻璃位置、门芯造型、把手位置和门框相对比例。',
     '包边参考图只约束包边/门套线/收口条/压线区域；颜色参考图只约束门体表面颜色、纹理色差和材质观感；门把手细节图只约束门把手区域；背景文字只约束背景或抠图。',
-    '如果最终图的门板线条数量、线条位置、门芯造型、门扇比例或把手位置与第一张整门图明显不同，应视为失败结果，必须改回第一张整门图的门型结构。',
-    '不要把第一张整门图重画成另一款门，不要新增或删除门板装饰线，不要把平板门改成浮雕门，也不要把浮雕门改成平板门。'
+    '如果最终图的门板线条数量、线条位置、门芯造型、门扇比例、把手位置、开门方向或门框比例与第一张整门图明显不同，应视为失败结果，必须改回第一张整门图的门型结构。',
+    '不要把第一张整门图重画成另一款门，不要新增或删除门板装饰线，不要把平板门改成浮雕门，也不要把浮雕门改成平板门。',
+    '即使用户要求白底、抠图、改颜色或换包边，也只能在第一张整门图的门型结构上完成，不得生成一扇新的商品门。'
   ].join('\n');
   const cutoutPreservationInstruction = isCutoutRequest
     ? [
@@ -675,8 +682,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ].join('\n');
 
   return [
-    '请在保留原始拍摄角度和整体构图的前提下处理这组门业参考图片。',
-    '输出必须是一张完整的整门效果图，不能返回单独的门把手参考图、局部裁切图、拼贴参考图或仅展示局部的图片。',
+    '请把第一张整门上下文图当作底图，在保留原始拍摄角度和整体构图的前提下做局部编辑。',
+    '输出必须是一张基于第一张整门图编辑后的完整整门效果图，不能返回单独的门把手参考图、局部裁切图、拼贴参考图或仅展示局部的图片。',
+    '禁止从零生成新门款；禁止把其他参考图中的整门样式迁移到第一张整门图上。',
     `用途：${job.templateType || '门业展示'}`,
     `门类型：${job.doorType || '未指定'}`,
     `目标部件：${targetPartText}`,
