@@ -553,7 +553,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     : '最高优先级限制：包边替换不是整门换款。只允许修改包边、门套线、收口条、压线和其极小衔接边缘；包边参考图默认只提供包边结构、宽窄、层次、线条和收边方式，包边颜色默认匹配第一张整门图的门体颜色；门扇主体、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯造型、门面颜色、五金把手必须保持整门照原样。严禁为了适配包边而重画门扇。';
   const requiredReferenceTasks = [
     hasHandleDetail ? '门把手：必须按门把手细节图融合/替换' : '',
-    hasEdgeTrimDetail ? '包边：必须识别包边参考图中的包边并融合/替换' : '',
+    hasEdgeTrimDetail ? '包边：必须识别包边参考图中的包边结构并产生可见融合/替换效果，不能保留原包边不变' : '',
     hasColorSample
       ? (edgeTrimColorProtectedFromColorSample
         ? '门体颜色：必须按颜色参考图调整门扇/门体可见表面颜色和材质观感；包边因客户明确要求独立颜色，按客户包边颜色或包边参考图颜色执行'
@@ -564,8 +564,11 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     ? [
         `结构化强制任务清单：${requiredReferenceTasks.join('；')}。`,
         '以上任务是并列关系，不是互斥关系；如果同时上传了多个参考图，最终成图必须同时完成这些参考图对应的修改。',
-        '不要只执行其中一个参考图任务后忽略其他已上传参考图。'
-      ].join('\n')
+        '不要只执行其中一个参考图任务后忽略其他已上传参考图。',
+        hasEdgeTrimDetail
+          ? '包边验收标准：只要上传了包边参考图，最终图中包边/门套线/收口条/压线区域必须能看出来自参考图的宽窄、层次、截面、线条或收边方式变化；颜色同门同色不等于完成包边任务，保留原包边结构不变视为失败。'
+          : ''
+      ].filter(Boolean).join('\n')
     : '';
   const layeredTaskOrderInstruction = requiredReferenceTasks.length
     ? [
@@ -573,7 +576,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         edgeTrimColorProtectedFromColorSample
           ? '后执行的任务不能覆盖先执行的任务：客户已经明确要求包边独立颜色，因此颜色任务不能把包边统一成门体颜色；背景/白底任务不能删除、变浅、简化或重画包边。'
           : '后执行的任务不能覆盖先执行的任务：颜色任务默认要覆盖门扇、门体、包边、门套、收口条、压线和同门体侧边的可见门面颜色，使包边与门体同色；但不能改变包边参考图提供的宽窄、层次、线条和收边结构；背景/白底任务不能删除、变浅、简化或重画包边。',
-        '最终自检：只要上传了包边参考图，成图中门洞周围必须能清楚看到参考包边的宽窄、层次、线条和收边结构；如果白底后包边变成无层次的普通边框或消失，视为失败。',
+        '最终自检：只要上传了包边参考图，成图中门洞周围必须能清楚看到参考包边的宽窄、层次、线条和收边结构；如果包边仍是原图旧结构、没有可见结构变化、白底后变成无层次的普通边框或消失，视为失败。',
         '最终自检：只要同时上传包边参考图和颜色参考图，必须同时完成“包边结构来自包边参考图、整门颜色来自颜色参考图且包边默认同门同色”，不能只改颜色而忽略包边结构。'
       ].join('\n')
     : '';
@@ -583,15 +586,16 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '高优先级指令：包边参考图可能是一张包边近景，也可能是一整扇门。无论是哪一种，都只能从中提取门洞周围的包边、门套线、收口条、压线、外框边缘和收边方式。',
         '禁止从包边参考图中迁移门扇主体、门芯造型、门板分割、门板花纹、玻璃、把手、锁体、门扇颜色或整门款式；参考图里那扇门不是要替换的门，只是包边来源。',
         '如果包边参考图是一整扇门，必须把它当作“包边取样图”，不能把它当作“新门样式图”。不要让最终门扇变成包边参考图中的那扇门。',
-        '高优先级指令：只要输入中包含包边参考图，本次任务就默认必须执行“把该参考包边融合/替换到整门照中”的操作；这是强制目标，不需要等待客户额外说明。',
-        '任务目标：请先在整门照中识别原有包边、门套线、门框内外侧收口条、压线和边缘收口区域，再把包边参考图中的包边款式融合到这些对应位置。',
-        '最终输出必须是一张已经使用参考包边后的完整整门效果图，不能只是把包边参考图当作颜色参考，也不能保留与参考图不一致的原包边。',
+        '高优先级指令：只要输入中包含包边参考图，本次任务就默认必须执行“把该参考包边融合/替换到整门照中”的操作；这是强制目标，不需要等待客户额外说明，也不能因为颜色同门同色、补充要求为空、背景任务或颜色任务而跳过。',
+        '任务目标：请先在整门照中识别原有包边、门套线、门框内外侧收口条、压线和边缘收口区域，再把包边参考图中的包边款式融合到这些对应位置。必须直接观察输入的包边参考图本身，即使系统识别文本为空或不完整，也要从参考图里提取包边结构。',
+        '最终输出必须是一张已经使用参考包边后的完整整门效果图，不能只是把包边参考图当作颜色参考，也不能保留与参考图不一致的原包边。颜色同门同色时，也必须通过宽窄、层次、截面、线条、倒角、压线或收边方式体现包边已更换。',
         edgeTrimScopeLimitInstruction,
         allowBackgroundChange
           ? '背景、抠图或白底按客户背景要求执行；但背景变化不能反向改变门扇结构、包边参考任务、门体颜色任务或把手任务。'
           : '墙面、地面、背景和整体构图必须保持整门照原样。',
         '如果模型需要在“更完整地替换包边”和“保持门样式不变”之间取舍，必须优先保持门样式不变，只做更小范围的包边融合。',
         '包边融合失败判定：如果最终图出现新的门板分割、新的浮雕花纹、新的把手位置、新的门扇比例或把主门替换成参考门款式，都属于失败，必须退回为第一张整门图的门扇结构。',
+        '包边未执行失败判定：如果最终图的包边/门套线/收口条/压线看起来仍是第一张整门图原来的结构，没有体现参考图的宽窄、层次、截面、线条或收边方式，也属于失败。',
         edgeTrimStyle && edgeTrimStyle.applyDescription
           ? (userWantsIndependentEdgeTrimColor
             ? `包边执行描述：${edgeTrimStyle.applyDescription}。`
@@ -611,7 +615,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     : '';
   const auxiliaryReferenceInstruction = [
     hasEdgeTrimDetail
-      ? '高优先级指令：输入中包含包边参考图时，系统默认必须自动识别、定位并更换/融合该包边参考；如果参考图是一整扇门，也必须只识别这扇门的包边并 P 到主门上，不需要客户额外说明“把包边 P 上去”。'
+      ? '高优先级指令：输入中包含包边参考图时，系统默认必须自动识别、定位并更换/融合该包边参考；如果参考图是一整扇门，也必须只识别这扇门的包边并 P 到主门上，不需要客户额外说明“把包边 P 上去”。最终包边结构必须有可见变化，不能只保持原包边不动。'
       : '',
     hasColorSample
       ? (edgeTrimColorProtectedFromColorSample
@@ -666,6 +670,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     ? [
         '本次只有包边参考图，且客户没有上传颜色参考图，也没有在文字中提出改颜色、改背景或其他变化。',
         '因此本次唯一允许变化的对象是包边/门套线/收口条/压线区域；包边颜色默认匹配第一张整门图的门体颜色，不按包边参考图的颜色独立变化。',
+        '虽然颜色默认匹配门体，但包边结构必须发生可见替换：宽窄比例、截面层次、内外线条、压线、倒角或收边方式至少应有一项明显来自包边参考图。',
         '禁止改变门扇样式、门板纹理、门板颜色、门型结构、开门比例、玻璃形状、门把手、锁体、背景和整体构图。',
         '输出应看起来像在原整门照上只更换了包边，而不是重新生成了一扇门。'
       ].join('\n')
@@ -999,6 +1004,9 @@ async function buildEditArtifacts(job) {
   console.log('[worker] downloaded edit artifacts', job._id || job.jobId, {
     inputImageCount: inputImages.length,
     hasHandleDetail: !!handleDetail,
+    hasEdgeTrimDetail: referenceImages.some((item) => item && item.slotId === 'edge-trim-detail'),
+    hasColorSample: referenceImages.some((item) => item && item.slotId === 'color-sample'),
+    referenceSlots: referenceImages.map((item) => item && item.slotId).filter(Boolean),
     primarySize,
     detectionMode,
     maskBox,
@@ -1145,6 +1153,9 @@ async function processJob(jobId) {
   console.log('[worker] built prompt', {
     jobId,
     hasHandleDetail: !!getHandleDetailImage(job),
+    hasEdgeTrimDetail: getReferenceImages(job).some((item) => item && item.slotId === 'edge-trim-detail'),
+    hasColorSample: getReferenceImages(job).some((item) => item && item.slotId === 'color-sample'),
+    referenceSlots: getReferenceImages(job).map((item) => item && item.slotId).filter(Boolean),
     referenceImageCount: getReferenceImages(job).length,
     hasMask: !!editArtifacts.maskFile,
     detectionMode: editArtifacts.detectionMode,
