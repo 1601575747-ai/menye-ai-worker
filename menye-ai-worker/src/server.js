@@ -549,6 +549,14 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '不要只执行其中一个参考图任务后忽略其他已上传参考图。'
       ].join('\n')
     : '';
+  const layeredTaskOrderInstruction = requiredReferenceTasks.length
+    ? [
+        '强制执行顺序：先锁定第一张整门图的门型几何、门扇比例、线条位置和把手位置，再按包边参考图处理包边层，再按颜色参考图处理门体颜色层，最后才处理背景/白底。',
+        '后执行的任务不能覆盖先执行的任务：颜色任务不能把包边改成色板颜色，背景/白底任务不能删除、变浅、简化或重画包边。',
+        '最终自检：只要上传了包边参考图，成图中门洞周围必须能清楚看到参考包边的颜色、宽窄、层次和收边结构；如果白底后包边变成普通浅色边框或消失，视为失败。',
+        '最终自检：只要同时上传包边参考图和颜色参考图，必须同时完成“包边来自包边参考图、门体颜色来自颜色参考图”，不能只改颜色而忽略包边。'
+      ].join('\n')
+    : '';
   const edgeTrimStrictInstruction = hasEdgeTrimDetail
     ? [
         '高优先级指令：包边参考图是包边款式的唯一参考来源，严格程度与门把手细节图相同。',
@@ -707,6 +715,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     handleStyleInstruction,
     referenceStyleInstruction,
     requiredReferenceTaskInstruction,
+    layeredTaskOrderInstruction,
     edgeTrimStrictInstruction,
     auxiliaryReferenceInstruction,
     colorSampleStrictInstruction,
