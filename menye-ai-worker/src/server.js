@@ -171,9 +171,10 @@ function getPromptDecisionSummary(job) {
   const referenceImages = getReferenceImages(job);
   const hasEdgeTrimDetail = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail');
   const hasColorSample = referenceImages.some((item) => item && item.slotId === 'color-sample');
+  const userSelectedEdgeTrimReferenceColor = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail' && item.colorMode === 'reference');
   const userWantsEdgeTrimDoorColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:同门|跟门|与门|和门|门体|门扇|整门)[^。；，,.]{0,24}(?:同色|一样|一致|统一)|(?:门体|门扇|整门)[^。；，,.]{0,24}(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:同色|一样|一致|统一)/.test(requirementText);
   const userSpecifiedEdgeTrimColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:改成|换成|调成|做成|改为|设为|使用|用)[^。；，,.]{0,24}(?:颜色|色|黑|白|灰|棕|木|金|银|红|黄|蓝|绿|深|浅)|(?:黑色|白色|灰色|棕色|木色|金色|银色|深色|浅色)[^。；，,.]{0,24}(?:包边|门套|收口|压线)/.test(requirementText);
-  const userWantsEdgeTrimReferenceColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:按|跟随|参考|保留|保持|使用|用)[^。；，,.]{0,28}(?:包边参考图|参考图|原图)[^。；，,.]{0,16}(?:颜色|色|固有色)|(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:不要|不跟|不同|独立|单独|另外|另做)[^。；，,.]{0,28}(?:同门|跟门|门体|门扇|整门|同色|统一|颜色|色)/.test(requirementText);
+  const userWantsEdgeTrimReferenceColor = userSelectedEdgeTrimReferenceColor || /(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:按|跟随|参考|保留|保持|使用|用)[^。；，,.]{0,28}(?:包边参考图|参考图|原图)[^。；，,.]{0,16}(?:颜色|色|固有色)|(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:不要|不跟|不同|独立|单独|另外|另做)[^。；，,.]{0,28}(?:同门|跟门|门体|门扇|整门|同色|统一|颜色|色)/.test(requirementText);
   const userWantsEdgeTrimPreserveColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:颜色|色|原色|本色|自身颜色|当前颜色|现在颜色)[^。；，,.]{0,16}(?:保持不变|不变|别变|不要变|不能变|保留|维持|锁定|不改|不要改|原样)|(?:保持不变|不变|别变|不要变|不能变|保留|维持|锁定|不改|不要改|原样)[^。；，,.]{0,24}(?:包边|门套|收口|压线)[^。；，,.]{0,16}(?:颜色|色|原色|本色|自身颜色|当前颜色|现在颜色)|(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:保留|保持|用|使用)[^。；，,.]{0,16}(?:原色|本色|自身颜色|当前颜色|现在颜色|原包边颜色)/.test(requirementText);
   const userWantsIndependentEdgeTrimColor = !userWantsEdgeTrimDoorColor && (userSpecifiedEdgeTrimColor || userWantsEdgeTrimReferenceColor || userWantsEdgeTrimPreserveColor);
   const allowDoorSurfaceColorChange = hasColorSample || /门.*颜色|颜色.*门|颜色参考|色号|改色|换色|调色|变色|颜色不对|颜色再|颜色偏|YM[-\w]*/i.test(requirementText);
@@ -182,6 +183,7 @@ function getPromptDecisionSummary(job) {
     backgroundInfo,
     hasEdgeTrimDetail,
     hasColorSample,
+    userSelectedEdgeTrimReferenceColor,
     userWantsEdgeTrimDoorColor,
     userSpecifiedEdgeTrimColor,
     userWantsEdgeTrimReferenceColor,
@@ -560,12 +562,14 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
 function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const requirementText = job && job.requirement ? String(job.requirement) : '';
   const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
+  const referenceImages = getReferenceImages(job);
+  const userSelectedEdgeTrimReferenceColor = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail' && item.colorMode === 'reference');
   const allowHandleColorChange = /把手.*颜色|颜色.*把手|门把手.*颜色|颜色.*门把手|调成门的颜色|改成门的颜色|同门颜色|跟门同色|与门同色/.test(requirementText);
   const allowHandleStyleChange = /更换把手|更改把手样式|改变把手样式|换个把手|把手款式|把手造型|把手结构/.test(requirementText);
   const allowHandleBaseChange = /去掉底座|删除底座|取消底座|不要底座|只保留把手主体|弱化底座|缩小底座/.test(requirementText);
   const userWantsEdgeTrimDoorColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:同门|跟门|与门|和门|门体|门扇|整门)[^。；，,.]{0,24}(?:同色|一样|一致|统一)|(?:门体|门扇|整门)[^。；，,.]{0,24}(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:同色|一样|一致|统一)/.test(requirementText);
   const userSpecifiedEdgeTrimColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:改成|换成|调成|做成|改为|设为|使用|用)[^。；，,.]{0,24}(?:颜色|色|黑|白|灰|棕|木|金|银|红|黄|蓝|绿|深|浅)|(?:黑色|白色|灰色|棕色|木色|金色|银色|深色|浅色)[^。；，,.]{0,24}(?:包边|门套|收口|压线)/.test(requirementText);
-  const userWantsEdgeTrimReferenceColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:按|跟随|参考|保留|保持|使用|用)[^。；，,.]{0,28}(?:包边参考图|参考图|原图)[^。；，,.]{0,16}(?:颜色|色|固有色)|(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:不要|不跟|不同|独立|单独|另外|另做)[^。；，,.]{0,28}(?:同门|跟门|门体|门扇|整门|同色|统一|颜色|色)/.test(requirementText);
+  const userWantsEdgeTrimReferenceColor = userSelectedEdgeTrimReferenceColor || /(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:按|跟随|参考|保留|保持|使用|用)[^。；，,.]{0,28}(?:包边参考图|参考图|原图)[^。；，,.]{0,16}(?:颜色|色|固有色)|(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:不要|不跟|不同|独立|单独|另外|另做)[^。；，,.]{0,28}(?:同门|跟门|门体|门扇|整门|同色|统一|颜色|色)/.test(requirementText);
   const userWantsEdgeTrimPreserveColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:颜色|色|原色|本色|自身颜色|当前颜色|现在颜色)[^。；，,.]{0,16}(?:保持不变|不变|别变|不要变|不能变|保留|维持|锁定|不改|不要改|原样)|(?:保持不变|不变|别变|不要变|不能变|保留|维持|锁定|不改|不要改|原样)[^。；，,.]{0,24}(?:包边|门套|收口|压线)[^。；，,.]{0,16}(?:颜色|色|原色|本色|自身颜色|当前颜色|现在颜色)|(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:保留|保持|用|使用)[^。；，,.]{0,16}(?:原色|本色|自身颜色|当前颜色|现在颜色|原包边颜色)/.test(requirementText);
   const userWantsIndependentEdgeTrimColor = !userWantsEdgeTrimDoorColor && (userSpecifiedEdgeTrimColor || userWantsEdgeTrimReferenceColor || userWantsEdgeTrimPreserveColor);
   const allowEdgeTrimColorChange = userWantsEdgeTrimDoorColor || userSpecifiedEdgeTrimColor || userWantsEdgeTrimReferenceColor || userWantsEdgeTrimPreserveColor;
@@ -586,7 +590,6 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       }).filter(Boolean)
     : [];
   const targetPartText = targetParts.length ? targetParts.join('、') : '门体';
-  const referenceImages = getReferenceImages(job);
   const imageLines = referenceImages.map((item, index) => {
     const label = getReferenceSlotLabel(item.slotId);
     if (index === 0) {
@@ -661,11 +664,14 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const edgeTrimIndependentColorInstruction = edgeTrimColorProtectedFromColorSample
     ? [
         '包边颜色独立意图解释：客户说“包边按参考图颜色”“包边单独颜色”“包边颜色保持不变”“包边颜色不要跟门走”等，都应理解为包边颜色不参与默认同门同色，不被颜色参考图或门体统一颜色覆盖。',
+        userSelectedEdgeTrimReferenceColor
+          ? '本次用户已在上传页选择“包边颜色和包边参考图颜色一样”，因此包边颜色必须按包边参考图中包边区域的可见取样色执行。'
+          : '',
         edgeTrimPreserveMeansReferenceColor
           ? '本次已上传包边参考图，且文字更接近“包边颜色保持不变”，这里的“不变”指保持包边参考图中包边自身的可见颜色；不要理解成保留主门旧包边颜色。'
           : '如果客户指定了具体色名或色号，就按客户指定；如果客户说按包边参考图颜色，就按包边参考图；如果只说包边单独/不要同门，则由 AI 根据客户语义和上传参考图判断最合理的独立包边颜色，但绝不能自动拉成门体颜色。',
         '无论包边颜色如何独立，包边结构仍必须来自包边参考图，门扇主体结构必须来自第一张整门图。'
-      ].join('\n')
+      ].filter(Boolean).join('\n')
     : '';
   const layeredTaskOrderInstruction = requiredReferenceTasks.length
     ? [
@@ -1171,6 +1177,10 @@ async function buildEditArtifacts(job) {
     hasEdgeTrimDetail: referenceImages.some((item) => item && item.slotId === 'edge-trim-detail'),
     hasColorSample: referenceImages.some((item) => item && item.slotId === 'color-sample'),
     referenceSlots: referenceImages.map((item) => item && item.slotId).filter(Boolean),
+    referenceOptions: referenceImages.map((item) => ({
+      slotId: item && item.slotId,
+      colorMode: item && item.colorMode
+    })).filter((item) => item.slotId),
     primarySize,
     detectionMode,
     maskBox,
@@ -1321,6 +1331,10 @@ async function processJob(jobId) {
     hasColorSample: getReferenceImages(job).some((item) => item && item.slotId === 'color-sample'),
     referenceSlots: getReferenceImages(job).map((item) => item && item.slotId).filter(Boolean),
     referenceImageCount: getReferenceImages(job).length,
+    referenceOptions: getReferenceImages(job).map((item) => ({
+      slotId: item && item.slotId,
+      colorMode: item && item.colorMode
+    })).filter((item) => item.slotId),
     promptDecision: getPromptDecisionSummary(job),
     hasMask: !!editArtifacts.maskFile,
     detectionMode: editArtifacts.detectionMode,
