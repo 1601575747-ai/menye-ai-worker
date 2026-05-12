@@ -4,6 +4,12 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const cloudbase = require('@cloudbase/node-sdk');
 const openaiModule = require('openai');
+let sharp = null;
+try {
+  sharp = require('sharp');
+} catch (error) {
+  sharp = null;
+}
 
 const ENV_ID = process.env.CLOUDBASE_ENV_ID;
 const SECRET_ID = process.env.CLOUDBASE_SECRET_ID;
@@ -202,10 +208,11 @@ function getReferenceStylePrompt(slotId) {
       return [
         '请识别这张门业包边参考图中的包边/门套线/收口条外观特征，只返回 JSON。',
         '注意：这张图可能是包边近景，也可能是一整扇门。即使图片是一整扇门，也只能识别门洞周围的包边、门套线、收口条、压线和边缘收口区域，不要识别门扇主体、门板花纹、把手、锁体或整门款式。',
-        'JSON 格式必须为：{"part":"包边","sourceType":"近景或整门参考","color":"...","colorFamily":"...","undertone":"...","brightness":"...","saturation":"...","hueLock":"...","toneLock":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","applyDescription":"..."}。',
+        'JSON 格式必须为：{"part":"包边","sourceType":"近景或整门参考","color":"...","colorFamily":"...","undertone":"...","brightness":"...","saturation":"...","hueLock":"...","toneLock":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
         '颜色识别必须和门体颜色参考图使用同一套标准：像 Photoshop 吸管工具一样，以包边区域肉眼可见的主取样颜色为准。不要推断“材料本身固有色”，不要自动校正白平衡、环境光或拍摄偏色；看到什么颜色就提取什么颜色。只避开明显高光点、反光点、深阴影、污渍和噪点，从包边/门套线/收口条中最大、最均匀、最能代表包边表面的区域取样。',
         '其中 color 表示可直接用于生成的具体可见取样色描述，不要只写“深色”“浅色”；colorFamily 表示颜色大类，例如黑、灰、白、棕、红棕、金、香槟、木色等；undertone 表示可见冷暖色偏，例如偏黄、偏红、偏灰、偏蓝、偏金；brightness 表示肉眼可见明度，例如深/中深/中/浅；saturation 表示肉眼可见饱和度，例如低饱和/中饱和/高饱和；hueLock 表示最不能漂移的可见色相约束，例如不要偏红、不要偏黄、不要偏绿、不要偏蓝；toneLock 表示最不能漂移的明暗/灰度约束，例如不要提亮、不要压暗、不要加灰、不要加暖；material 表示材质，finish 表示表面工艺或质感，shape 表示整体造型和宽窄比例，structure 表示门套线、收口条、压线、拼接结构，profile 表示截面层次、凹凸、倒角、圆角、折边等轮廓特征，edge 表示边角、转角、收边方式，details 表示纹路、线条、装饰、色差、取样区域等关键细节。',
         '如果包边区域里有多个颜色，请选择面积最大、最像客户想要包边表面颜色的可见主色，并在 details 里说明次要色、纹理色差或阴影色。',
+        'sampleBox 必须框住最适合取包边真实可见颜色的区域，坐标是相对整张图 0 到 1 的比例。必须只框包边/门套线/收口条区域，不能框门扇主体、墙面、地面、把手或玻璃；如果是包边近景，就框中间最均匀的包边表面区域。',
         'applyDescription 必须同时包含包边结构描述和“可见取样色”描述，颜色部分要包含颜色大类、冷暖色偏、明度、饱和度和禁止漂移方向，例如“提取参考图中门洞外圈的中浅低饱和偏金香槟色窄边门套线和内侧细压线，不要偏黄或提亮，只迁移包边，不迁移门扇”。',
         '如果参考图是一整扇门，必须在 details 里说明“已忽略门扇主体和把手，只提取包边”。',
         '必须尽量具体，不要只写“普通包边”“金属包边”“木纹包边”这类泛化描述。',
@@ -214,10 +221,11 @@ function getReferenceStylePrompt(slotId) {
     case 'color-sample':
       return [
         '请像 Photoshop 吸管工具一样识别这张门体颜色参考图中肉眼可见的主取样颜色和材质特征，只返回 JSON。',
-        'JSON 格式必须为：{"part":"门体颜色","color":"...","colorFamily":"...","undertone":"...","brightness":"...","saturation":"...","hueLock":"...","toneLock":"...","material":"...","finish":"...","shape":"...","structure":"...","details":"...","applyDescription":"..."}。',
+        'JSON 格式必须为：{"part":"门体颜色","color":"...","colorFamily":"...","undertone":"...","brightness":"...","saturation":"...","hueLock":"...","toneLock":"...","material":"...","finish":"...","shape":"...","structure":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
         '识别时不要推断“材料本身固有色”，不要自动校正白平衡、环境光或拍摄偏色；看到什么颜色就提取什么颜色。只避开明显高光点、反光点、深阴影、污渍和噪点，从最大、最均匀、最能代表门体表面的区域取样。',
         '其中 color 表示可直接用于生成的具体可见取样色描述，不要只写“深色”“浅色”；colorFamily 表示颜色大类，例如黑、灰、白、棕、红棕、金、香槟、木色等；undertone 表示可见冷暖色偏，例如偏黄、偏红、偏灰、偏蓝、偏金；brightness 表示肉眼可见明度，例如深/中深/中/浅；saturation 表示肉眼可见饱和度，例如低饱和/中饱和/高饱和；hueLock 表示最不能漂移的可见色相约束，例如不要偏红、不要偏黄、不要偏绿、不要偏蓝；toneLock 表示最不能漂移的明暗/灰度约束，例如不要提亮、不要压暗、不要加灰、不要加暖；material 表示材质；finish 表示哑光/亮光/金属/木纹等表面质感；shape 可以写“不适用”；structure 表示纹理方向或拼色关系；details 表示取样区域、木纹、拉丝、颗粒、色差等关键细节；applyDescription 表示给图像编辑模型执行时应使用的一句话颜色描述。',
         '如果图片里有多个颜色，请选择面积最大、最像客户想要门体表面颜色的可见主色，并在 details 里说明次要色或纹理色差。',
+        'sampleBox 必须框住最适合取门体真实可见颜色的区域，坐标是相对整张图 0 到 1 的比例。必须只框色卡、门板颜色样、门体表面或材质样，不能框墙面、地面、把手、文字标签、强反光或阴影。',
         'applyDescription 必须写成“可见取样色”描述，包含颜色大类、冷暖色偏、明度、饱和度和禁止漂移方向，例如“可见取样色为中深低饱和冷灰木色，不要偏黄或提亮”。',
         '不要解释，不要输出 markdown。'
       ].join('\n');
@@ -276,6 +284,123 @@ function getImageSize(buffer, fileID) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function normalizeSampleBox(rawBox) {
+  if (!rawBox || typeof rawBox !== 'object') {
+    return null;
+  }
+  const left = Number(rawBox.left);
+  const top = Number(rawBox.top);
+  const right = Number(rawBox.right);
+  const bottom = Number(rawBox.bottom);
+  if (![left, top, right, bottom].every(Number.isFinite)) {
+    return null;
+  }
+  const normalized = {
+    left: clamp(left, 0, 1),
+    top: clamp(top, 0, 1),
+    right: clamp(right, 0, 1),
+    bottom: clamp(bottom, 0, 1)
+  };
+  if (normalized.right - normalized.left < 0.03 || normalized.bottom - normalized.top < 0.03) {
+    return null;
+  }
+  return normalized;
+}
+
+function getDefaultColorSampleBox(slotId, style) {
+  if (slotId === 'color-sample') {
+    return { left: 0.3, top: 0.3, right: 0.7, bottom: 0.7 };
+  }
+  if (slotId === 'edge-trim-detail') {
+    const sourceType = `${style && style.sourceType || ''} ${style && style.details || ''}`;
+    if (/近景|细节|局部|特写/.test(sourceType)) {
+      return { left: 0.25, top: 0.25, right: 0.75, bottom: 0.75 };
+    }
+  }
+  return null;
+}
+
+function median(values) {
+  if (!values.length) {
+    return 0;
+  }
+  const sorted = values.slice().sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function rgbToHex(r, g, b) {
+  return `#${[r, g, b].map((value) => clamp(Math.round(value), 0, 255).toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+}
+
+function describeSampledColor(rgb) {
+  if (!rgb) {
+    return '';
+  }
+  return `${rgb.hex} / rgb(${rgb.r},${rgb.g},${rgb.b})`;
+}
+
+async function sampleVisibleMedianColor(referenceImage, referenceBuffer, style) {
+  if (!sharp || !referenceBuffer) {
+    return null;
+  }
+  const slotId = referenceImage && referenceImage.slotId;
+  const sampleBox = normalizeSampleBox(style && style.sampleBox) || getDefaultColorSampleBox(slotId, style);
+  if (!sampleBox) {
+    return null;
+  }
+  const image = sharp(referenceBuffer).rotate();
+  const metadata = await image.metadata();
+  const width = metadata.width || 0;
+  const height = metadata.height || 0;
+  if (!width || !height) {
+    return null;
+  }
+  const left = clamp(Math.floor(sampleBox.left * width), 0, Math.max(width - 1, 0));
+  const top = clamp(Math.floor(sampleBox.top * height), 0, Math.max(height - 1, 0));
+  const extractWidth = clamp(Math.ceil((sampleBox.right - sampleBox.left) * width), 1, width - left);
+  const extractHeight = clamp(Math.ceil((sampleBox.bottom - sampleBox.top) * height), 1, height - top);
+  const targetWidth = Math.min(extractWidth, 180);
+  const targetHeight = Math.max(1, Math.round(extractHeight * (targetWidth / extractWidth)));
+  const { data, info } = await image
+    .extract({ left, top, width: extractWidth, height: extractHeight })
+    .resize({ width: targetWidth, height: targetHeight, fit: 'fill' })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const reds = [];
+  const greens = [];
+  const blues = [];
+  for (let index = 0; index < data.length; index += info.channels) {
+    const r = data[index];
+    const g = data[index + 1];
+    const b = data[index + 2];
+    const luma = (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+    if (luma <= 8 || luma >= 248) {
+      continue;
+    }
+    reds.push(r);
+    greens.push(g);
+    blues.push(b);
+  }
+  const totalPixels = Math.floor(data.length / info.channels);
+  if (reds.length < Math.max(20, totalPixels * 0.08)) {
+    return null;
+  }
+  const r = median(reds);
+  const g = median(greens);
+  const b = median(blues);
+  return {
+    r,
+    g,
+    b,
+    hex: rgbToHex(r, g, b),
+    sampleBox,
+    pixelCount: reds.length,
+    totalPixels,
+    method: `${slotId || 'reference'}-visible-median-rgb`
+  };
 }
 
 function buildHandleMaskBuffer(width, height, box) {
@@ -538,6 +663,7 @@ async function detectReferenceStyle(referenceImage, referenceBuffer) {
     profile: parsed.profile || '',
     edge: parsed.edge || '',
     details: parsed.details || '',
+    sampleBox: normalizeSampleBox(parsed.sampleBox),
     applyDescription: parsed.applyDescription || ''
   };
 }
@@ -554,8 +680,8 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
     : '最终包边颜色跟门体/颜色参考图统一。';
   return styles.map((style) => (
     style.slotId === 'edge-trim-detail' && !useEdgeTrimReferenceColor
-      ? `系统识别到${style.label || style.part || '包边参考图'}结构特征：来源类型=${style.sourceType || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；颜色字段默认忽略，不作为最终包边颜色；执行描述=只提取包边结构、宽窄、层次、线条、纹理走向和收边方式，${edgeTrimColorFallback}`
-      : `系统识别到${style.label || style.part || '参考图'}特征：来源类型=${style.sourceType || '未识别'}；颜色=${style.color || '未识别'}；颜色大类=${style.colorFamily || '未识别'}；冷暖色偏=${style.undertone || '未识别'}；明度=${style.brightness || '未识别'}；饱和度=${style.saturation || '未识别'}；色相锁定=${style.hueLock || '未识别'}；明暗/灰度锁定=${style.toneLock || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '未识别'}。`
+      ? `系统识别到${style.label || style.part || '包边参考图'}结构特征：来源类型=${style.sourceType || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；颜色字段默认忽略，不作为最终包边颜色；执行描述=只提取包边结构、宽窄、层次、线条、纹理走向和收边方式，${edgeTrimColorFallback}`
+      : `系统识别到${style.label || style.part || '参考图'}特征：来源类型=${style.sourceType || '未识别'}；颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；颜色大类=${style.colorFamily || '未识别'}；冷暖色偏=${style.undertone || '未识别'}；明度=${style.brightness || '未识别'}；饱和度=${style.saturation || '未识别'}；色相锁定=${style.hueLock || '未识别'}；明暗/灰度锁定=${style.toneLock || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '未识别'}。`
   )).join('\n');
 }
 
@@ -665,7 +791,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     ? [
         '包边颜色独立意图解释：客户说“包边按参考图颜色”“包边单独颜色”“包边颜色保持不变”“包边颜色不要跟门走”等，都应理解为包边颜色不参与默认同门同色，不被颜色参考图或门体统一颜色覆盖。',
         userSelectedEdgeTrimReferenceColor
-          ? '本次用户已在上传页选择“包边颜色和包边参考图颜色一样”，因此包边颜色必须按包边参考图中包边区域的可见取样色执行。'
+          ? `本次用户已在上传页选择“包边颜色和包边参考图颜色一样”，因此包边颜色必须按包边参考图中包边区域的照片像素取样色执行${edgeTrimStyle && edgeTrimStyle.sampledColor ? `：${describeSampledColor(edgeTrimStyle.sampledColor)}` : ''}。这是照片里的可见颜色，不要做白平衡校正、不要去光线、不要去阴影、不要自动美化。`
           : '',
         edgeTrimPreserveMeansReferenceColor
           ? '本次已上传包边参考图，且文字更接近“包边颜色保持不变”，这里的“不变”指保持包边参考图中包边自身的可见颜色；不要理解成保留主门旧包边颜色。'
@@ -731,7 +857,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         userWantsIndependentEdgeTrimColor
           ? (edgeTrimPreserveMeansReferenceColor
             ? '客户这次明确要求包边颜色保持不变，因此包边结构和颜色都应来自包边参考图中的包边区域；不要改成门体颜色或颜色参考图颜色，也不要保留主门旧包边颜色。'
-            : '客户这次明确要求包边使用独立颜色或按包边参考图颜色，因此包边颜色可以不同于门体；但包边结构、宽窄比例、截面层次、线条和关键细节仍应保持与包边参考图一致。')
+            : `客户这次明确要求包边使用独立颜色或按包边参考图颜色，因此包边颜色可以不同于门体；${edgeTrimStyle && edgeTrimStyle.sampledColor ? `包边颜色必须接近照片取样色 ${describeSampledColor(edgeTrimStyle.sampledColor)}；` : ''}但包边结构、宽窄比例、截面层次、线条和关键细节仍应保持与包边参考图一致。`)
           : (allowDoorSurfaceColorChange
             ? '默认规则：包边颜色必须跟门扇/门体同色。包边参考图默认不决定最终包边颜色，只决定包边结构、宽窄、层次、线条和收边方式；如果上传了颜色参考图，包边也应随整门一起使用该颜色参考图的颜色。'
             : '默认规则：包边颜色必须匹配第一张整门图的门扇/门体原始颜色。包边参考图默认不决定最终包边颜色，只决定包边结构、宽窄、层次、线条和收边方式；严禁为了让包边同色而把门体改成包边参考图颜色。'),
@@ -780,6 +906,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
           ? '优先级例外：客户已经表达包边颜色独立意图，因此包边颜色按客户语义独立执行，不被整门统一颜色覆盖；其他部件只有在补充要求明确指定不同颜色时，才按局部颜色优先。'
           : '优先级例外：只有补充要求明确指定某个部件使用不同颜色时，该部件才按局部颜色优先；包边参考图默认只提供结构，不会让包边颜色脱离整门统一颜色。',
         `颜色执行描述：${(colorSampleStyle && (colorSampleStyle.applyDescription || colorSampleStyle.color)) || '以颜色参考图中的可见主取样色、纹理和材质观感为准'}。`,
+        colorSampleStyle && colorSampleStyle.sampledColor
+          ? `程序取样色：${describeSampledColor(colorSampleStyle.sampledColor)}。这是从照片目标区域直接取得的 RGB 中位数，只过滤极端高光和极端黑影；生成时必须优先接近这个照片可见色，不要做白平衡校正、不要去光线、不要去阴影、不要自动美化。`
+          : '',
         `颜色约束：颜色大类=${(colorSampleStyle && colorSampleStyle.colorFamily) || '未识别'}；冷暖色偏=${(colorSampleStyle && colorSampleStyle.undertone) || '未识别'}；明度=${(colorSampleStyle && colorSampleStyle.brightness) || '未识别'}；饱和度=${(colorSampleStyle && colorSampleStyle.saturation) || '未识别'}；色相锁定=${(colorSampleStyle && colorSampleStyle.hueLock) || '未识别'}；明暗/灰度锁定=${(colorSampleStyle && colorSampleStyle.toneLock) || '未识别'}。`,
         colorSampleAppliesToEdgeTrim
           ? '请把颜色参考图中的可见主取样色应用到整门可见门面。不要把参考图颜色重新解释为更亮、更暗、更暖、更冷或更灰的材料固有色。'
@@ -1160,6 +1289,19 @@ async function buildEditArtifacts(job) {
         referenceBuffers[referenceImage.slotId]
       );
       if (style) {
+        try {
+          style.sampledColor = await sampleVisibleMedianColor(
+            referenceImage,
+            referenceBuffers[referenceImage.slotId],
+            style
+          );
+        } catch (error) {
+          console.warn('[worker] reference color sampling failed', {
+            jobId: job._id || job.jobId,
+            slotId: referenceImage.slotId,
+            message: error && error.message ? error.message : error
+          });
+        }
         referenceStyles.push(style);
       }
     } catch (error) {

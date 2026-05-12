@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@cloudbase/node-sdk": "latest",
-    "openai": "latest"
+    "openai": "latest",
+    "sharp": "latest"
   }
 }
