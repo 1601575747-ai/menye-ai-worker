@@ -317,6 +317,7 @@ function hasDoorSurfaceColorTextRequest(job) {
 
 function getReferenceStylePrompt(slotId, options = {}) {
   const targetColorCode = normalizeReferenceCode(options.targetColorCode);
+  const includeTexture = !!options.includeTexture;
   switch (slotId) {
     case 'edge-trim-detail':
       return [
@@ -335,6 +336,9 @@ function getReferenceStylePrompt(slotId, options = {}) {
     case 'color-sample':
       return [
         '请像 Photoshop 吸管工具一样识别这张门体颜色参考图中肉眼可见的主取样颜色和材质特征，只返回 JSON。',
+        includeTexture
+          ? '客户已选择“同时提取色卡纹理”，因此除了颜色，还必须识别目标色块/门板里的纹理方向、木纹/拉丝/颗粒、明暗纹理色差、表面质感和材质观感，并把这些纹理信息写入 material、finish、structure、details、applyDescription。'
+          : '客户没有选择“同时提取色卡纹理”，因此这张图主要只作为颜色参考；请识别目标色块的可见主色，纹理、木纹方向、颗粒和材质细节只作为辅助说明，不要要求最终图强制迁移色卡纹理。',
         targetColorCode
           ? `客户明确指定颜色编号/名称：${targetColorCode}。如果图片是包含多个门板/色块的色卡页，必须先找到文字标签与 ${targetColorCode} 完全匹配或语义严格匹配的那一个门板/色块，只识别该标签对应的门体颜色；例如用户写“粉白色”可以匹配色卡里的“粉白”，用户写“莫兰迪粉”必须匹配同名或非常明确的莫兰迪粉标签。严禁选择其他编号、相邻名称、整页平均色、标题、背景或面积最大的无关色块。`
           : '如果图片是包含多个门板/色块的色卡页，但客户没有指定编号，请选择最像客户想要门体表面颜色的主色块。',
@@ -343,7 +347,9 @@ function getReferenceStylePrompt(slotId, options = {}) {
           : '',
         'JSON 格式必须为：{"part":"门体颜色","referenceCode":"...","referenceName":"...","codeMatchConfidence":"...","color":"...","colorFamily":"...","undertone":"...","brightness":"...","saturation":"...","hueLock":"...","toneLock":"...","material":"...","finish":"...","shape":"...","structure":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
         '识别时不要推断“材料本身固有色”，不要自动校正白平衡、环境光或拍摄偏色；看到什么颜色就提取什么颜色。只避开明显高光点、反光点、深阴影、污渍和噪点，从最大、最均匀、最能代表门体表面的区域取样。',
-        '其中 color 表示可直接用于生成的具体可见取样色描述，不要只写“深色”“浅色”；colorFamily 表示颜色大类，例如黑、灰、白、棕、红棕、金、香槟、木色等；undertone 表示可见冷暖色偏，例如偏黄、偏红、偏灰、偏蓝、偏金；brightness 表示肉眼可见明度，例如深/中深/中/浅；saturation 表示肉眼可见饱和度，例如低饱和/中饱和/高饱和；hueLock 表示最不能漂移的可见色相约束，例如不要偏红、不要偏黄、不要偏绿、不要偏蓝；toneLock 表示最不能漂移的明暗/灰度约束，例如不要提亮、不要压暗、不要加灰、不要加暖；material 表示材质；finish 表示哑光/亮光/金属/木纹等表面质感；shape 可以写“不适用”；structure 表示纹理方向或拼色关系；details 表示取样区域、木纹、拉丝、颗粒、色差等关键细节；applyDescription 表示给图像编辑模型执行时应使用的一句话颜色描述。',
+        includeTexture
+          ? '其中 color 表示可直接用于生成的具体可见取样色描述，不要只写“深色”“浅色”；colorFamily 表示颜色大类，例如黑、灰、白、棕、红棕、金、香槟、木色等；undertone 表示可见冷暖色偏；brightness 表示肉眼可见明度；saturation 表示肉眼可见饱和度；hueLock 表示最不能漂移的可见色相约束；toneLock 表示最不能漂移的明暗/灰度约束；material 表示材质；finish 表示表面质感；shape 可以写“不适用”；structure 必须描述纹理方向、纹理粗细、木纹/拉丝/颗粒/拼色关系；details 必须描述取样区域、主纹理、次要纹理、纹理色差和需要迁移的纹理细节；applyDescription 必须同时包含颜色和纹理迁移描述。'
+          : '其中 color 表示可直接用于生成的具体可见取样色描述，不要只写“深色”“浅色”；colorFamily 表示颜色大类，例如黑、灰、白、棕、红棕、金、香槟、木色等；undertone 表示可见冷暖色偏，例如偏黄、偏红、偏灰、偏蓝、偏金；brightness 表示肉眼可见明度，例如深/中深/中/浅；saturation 表示肉眼可见饱和度，例如低饱和/中饱和/高饱和；hueLock 表示最不能漂移的可见色相约束，例如不要偏红、不要偏黄、不要偏绿、不要偏蓝；toneLock 表示最不能漂移的明暗/灰度约束，例如不要提亮、不要压暗、不要加灰、不要加暖；material、finish、structure、details 只作为辅助说明，不强制最终迁移色卡纹理；applyDescription 表示给图像编辑模型执行时应使用的一句话颜色描述。',
         targetColorCode
           ? `如果 ${targetColorCode} 对应门板内部有木纹明暗差，请选择该门板上面积最大、最均匀、最能代表 ${targetColorCode} 可见表面颜色的区域，并在 details 里写明“已按指定标签 ${targetColorCode} 取色”。`
           : '如果图片里有多个颜色，请选择面积最大、最像客户想要门体表面颜色的可见主色，并在 details 里说明次要色或纹理色差。',
@@ -351,6 +357,9 @@ function getReferenceStylePrompt(slotId, options = {}) {
         targetColorCode
           ? `applyDescription 必须包含“按颜色标签 ${targetColorCode} 对应门板取样”，并写成“可见取样色”描述，包含颜色大类、冷暖色偏、明度、饱和度和禁止漂移方向。`
           : 'applyDescription 必须写成“可见取样色”描述，包含颜色大类、冷暖色偏、明度、饱和度和禁止漂移方向，例如“可见取样色为中深低饱和冷灰木色，不要偏黄或提亮”。',
+        includeTexture
+          ? '因为客户选择了提取纹理，applyDescription 还必须写清楚应迁移的纹理，例如“保留纵向细木纹、浅深纹理色差、哑光木质质感”，但仍不能改变第一张整门图的门型结构、线条数量或比例。'
+          : '因为客户没有选择提取纹理，applyDescription 不要写成强制迁移纹理；最终主要按颜色执行，原门已有纹理结构应尽量保持。',
         '不要解释，不要输出 markdown。'
       ].filter(Boolean).join('\n');
     default:
@@ -454,6 +463,15 @@ function median(values) {
   return sorted[Math.floor(sorted.length / 2)];
 }
 
+function percentile(values, ratio) {
+  if (!values.length) {
+    return 0;
+  }
+  const sorted = values.slice().sort((a, b) => a - b);
+  const index = clamp(Math.round((sorted.length - 1) * ratio), 0, sorted.length - 1);
+  return sorted[index];
+}
+
 function rgbToHex(r, g, b) {
   return `#${[r, g, b].map((value) => clamp(Math.round(value), 0, 255).toString(16).padStart(2, '0')).join('')}`.toUpperCase();
 }
@@ -465,6 +483,152 @@ function describeSampledColor(rgb) {
   return `${rgb.hex} / rgb(${rgb.r},${rgb.g},${rgb.b})`;
 }
 
+function getInsetSampleBox(box, xInsetRatio, yInsetRatio) {
+  const width = box.right - box.left;
+  const height = box.bottom - box.top;
+  return normalizeSampleBox({
+    left: box.left + (width * xInsetRatio),
+    top: box.top + (height * yInsetRatio),
+    right: box.right - (width * xInsetRatio),
+    bottom: box.bottom - (height * yInsetRatio)
+  });
+}
+
+function getRelativeSampleBox(parent, centerX, centerY, boxWidthRatio, boxHeightRatio) {
+  const parentWidth = parent.right - parent.left;
+  const parentHeight = parent.bottom - parent.top;
+  const boxWidth = parentWidth * boxWidthRatio;
+  const boxHeight = parentHeight * boxHeightRatio;
+  let left = parent.left + (parentWidth * centerX) - (boxWidth / 2);
+  let top = parent.top + (parentHeight * centerY) - (boxHeight / 2);
+  let right = left + boxWidth;
+  let bottom = top + boxHeight;
+  if (left < parent.left) {
+    right += parent.left - left;
+    left = parent.left;
+  }
+  if (right > parent.right) {
+    left -= right - parent.right;
+    right = parent.right;
+  }
+  if (top < parent.top) {
+    bottom += parent.top - top;
+    top = parent.top;
+  }
+  if (bottom > parent.bottom) {
+    top -= bottom - parent.bottom;
+    bottom = parent.bottom;
+  }
+  return normalizeSampleBox({ left, top, right, bottom });
+}
+
+function dedupeSampleBoxes(boxes) {
+  const seen = new Set();
+  return boxes.filter((box) => {
+    if (!box) {
+      return false;
+    }
+    const key = [box.left, box.top, box.right, box.bottom]
+      .map((value) => value.toFixed(4))
+      .join(',');
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function getCandidateSampleBoxes(slotId, sampleBox) {
+  if (slotId !== 'color-sample') {
+    return [sampleBox];
+  }
+  const inner = getInsetSampleBox(sampleBox, 0.08, 0.08) || sampleBox;
+  return dedupeSampleBoxes([
+    getRelativeSampleBox(inner, 0.5, 0.38, 0.34, 0.22),
+    getRelativeSampleBox(inner, 0.5, 0.5, 0.34, 0.22),
+    getRelativeSampleBox(inner, 0.5, 0.62, 0.34, 0.22),
+    getRelativeSampleBox(inner, 0.38, 0.48, 0.28, 0.2),
+    getRelativeSampleBox(inner, 0.62, 0.48, 0.28, 0.2),
+    getRelativeSampleBox(inner, 0.5, 0.46, 0.55, 0.36),
+    inner,
+    sampleBox
+  ]);
+}
+
+async function readColorFromSampleBox(referenceBuffer, size, sampleBox, slotId, candidateIndex) {
+  const width = size.width;
+  const height = size.height;
+  const left = clamp(Math.floor(sampleBox.left * width), 0, Math.max(width - 1, 0));
+  const top = clamp(Math.floor(sampleBox.top * height), 0, Math.max(height - 1, 0));
+  const extractWidth = clamp(Math.ceil((sampleBox.right - sampleBox.left) * width), 1, width - left);
+  const extractHeight = clamp(Math.ceil((sampleBox.bottom - sampleBox.top) * height), 1, height - top);
+  const targetWidth = Math.min(extractWidth, 140);
+  const targetHeight = Math.max(1, Math.round(extractHeight * (targetWidth / extractWidth)));
+  const { data, info } = await sharp(referenceBuffer)
+    .rotate()
+    .extract({ left, top, width: extractWidth, height: extractHeight })
+    .resize({ width: targetWidth, height: targetHeight, fit: 'fill' })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const reds = [];
+  const greens = [];
+  const blues = [];
+  const pixels = [];
+  const lumas = [];
+  for (let index = 0; index < data.length; index += info.channels) {
+    const r = data[index];
+    const g = data[index + 1];
+    const b = data[index + 2];
+    const luma = (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+    if (luma <= 10 || luma >= 246) {
+      continue;
+    }
+    pixels.push({ r, g, b, luma });
+    lumas.push(luma);
+  }
+  const totalPixels = Math.floor(data.length / info.channels);
+  if (pixels.length < Math.max(20, totalPixels * 0.08)) {
+    return null;
+  }
+  const lowLuma = percentile(lumas, 0.08);
+  const highLuma = percentile(lumas, 0.92);
+  for (const pixel of pixels) {
+    if (pixel.luma < lowLuma || pixel.luma > highLuma) {
+      continue;
+    }
+    reds.push(pixel.r);
+    greens.push(pixel.g);
+    blues.push(pixel.b);
+  }
+  if (reds.length < Math.max(20, totalPixels * 0.05)) {
+    return null;
+  }
+  const r = median(reds);
+  const g = median(greens);
+  const b = median(blues);
+  const distances = pixels.map((pixel) => Math.sqrt(
+    ((pixel.r - r) ** 2) + ((pixel.g - g) ** 2) + ((pixel.b - b) ** 2)
+  ));
+  const colorSpread = median(distances);
+  const lumaSpread = highLuma - lowLuma;
+  const score = colorSpread + (lumaSpread * 0.35) + (candidateIndex * 0.6);
+  return {
+    r,
+    g,
+    b,
+    hex: rgbToHex(r, g, b),
+    sampleBox,
+    pixelCount: reds.length,
+    totalPixels,
+    colorSpread: Math.round(colorSpread * 100) / 100,
+    lumaSpread: Math.round(lumaSpread * 100) / 100,
+    score: Math.round(score * 100) / 100,
+    method: `${slotId || 'reference'}-stable-window-trimmed-median-rgb`
+  };
+}
+
 async function sampleVisibleMedianColor(referenceImage, referenceBuffer, style) {
   if (!sharp || !referenceBuffer) {
     return null;
@@ -474,56 +638,35 @@ async function sampleVisibleMedianColor(referenceImage, referenceBuffer, style) 
   if (!sampleBox) {
     return null;
   }
-  const image = sharp(referenceBuffer).rotate();
-  const metadata = await image.metadata();
+  const metadata = await sharp(referenceBuffer).rotate().metadata();
   const width = metadata.width || 0;
   const height = metadata.height || 0;
   if (!width || !height) {
     return null;
   }
-  const left = clamp(Math.floor(sampleBox.left * width), 0, Math.max(width - 1, 0));
-  const top = clamp(Math.floor(sampleBox.top * height), 0, Math.max(height - 1, 0));
-  const extractWidth = clamp(Math.ceil((sampleBox.right - sampleBox.left) * width), 1, width - left);
-  const extractHeight = clamp(Math.ceil((sampleBox.bottom - sampleBox.top) * height), 1, height - top);
-  const targetWidth = Math.min(extractWidth, 180);
-  const targetHeight = Math.max(1, Math.round(extractHeight * (targetWidth / extractWidth)));
-  const { data, info } = await image
-    .extract({ left, top, width: extractWidth, height: extractHeight })
-    .resize({ width: targetWidth, height: targetHeight, fit: 'fill' })
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const reds = [];
-  const greens = [];
-  const blues = [];
-  for (let index = 0; index < data.length; index += info.channels) {
-    const r = data[index];
-    const g = data[index + 1];
-    const b = data[index + 2];
-    const luma = (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
-    if (luma <= 8 || luma >= 248) {
-      continue;
+  const candidates = getCandidateSampleBoxes(slotId, sampleBox);
+  const sampled = [];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const result = await readColorFromSampleBox(
+      referenceBuffer,
+      { width, height },
+      candidates[index],
+      slotId,
+      index
+    );
+    if (result) {
+      sampled.push(result);
     }
-    reds.push(r);
-    greens.push(g);
-    blues.push(b);
   }
-  const totalPixels = Math.floor(data.length / info.channels);
-  if (reds.length < Math.max(20, totalPixels * 0.08)) {
+  if (!sampled.length) {
     return null;
   }
-  const r = median(reds);
-  const g = median(greens);
-  const b = median(blues);
+  sampled.sort((a, b) => a.score - b.score);
   return {
-    r,
-    g,
-    b,
-    hex: rgbToHex(r, g, b),
-    sampleBox,
-    pixelCount: reds.length,
-    totalPixels,
-    method: `${slotId || 'reference'}-visible-median-rgb`
+    ...sampled[0],
+    sourceSampleBox: sampleBox,
+    candidateCount: candidates.length,
+    acceptedCandidateCount: sampled.length
   };
 }
 
@@ -739,8 +882,10 @@ async function detectReferenceStyle(referenceImage, referenceBuffer, job) {
   const targetColorCode = referenceImage && referenceImage.slotId === 'color-sample'
     ? extractColorReferenceCode(job)
     : '';
+  const includeTexture = !!(referenceImage && referenceImage.slotId === 'color-sample' && referenceImage.textureMode === 'reference');
   const prompt = getReferenceStylePrompt(referenceImage && referenceImage.slotId, {
-    targetColorCode
+    targetColorCode,
+    includeTexture
   });
   if (!prompt || !referenceBuffer) {
     return null;
@@ -771,6 +916,8 @@ async function detectReferenceStyle(referenceImage, referenceBuffer, job) {
     referenceName: parsed.referenceName || '',
     targetColorCode,
     codeMatchConfidence: parsed.codeMatchConfidence || '',
+    textureMode: referenceImage.textureMode || '',
+    includeTexture,
     part: parsed.part || getReferenceSlotLabel(referenceImage.slotId),
     sourceType: parsed.sourceType || '',
     color: parsed.color || '',
@@ -850,6 +997,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const hasHandleDetail = referenceImages.some((item) => item.slotId === 'handle-detail');
   const hasEdgeTrimDetail = referenceImages.some((item) => item.slotId === 'edge-trim-detail');
   const hasColorSample = referenceImages.some((item) => item.slotId === 'color-sample');
+  const colorSampleUsesReferenceTexture = referenceImages.some((item) => item.slotId === 'color-sample' && item.textureMode === 'reference');
   const edgeTrimPreserveMeansReferenceColor = hasEdgeTrimDetail && userWantsEdgeTrimPreserveColor;
   const edgeTrimColorProtectedFromColorSample = hasEdgeTrimDetail && userWantsIndependentEdgeTrimColor;
   const colorSampleAppliesToEdgeTrim = hasColorSample && !edgeTrimColorProtectedFromColorSample;
@@ -899,9 +1047,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     hasColorSample
         ? (edgeTrimColorProtectedFromColorSample
         ? (edgeTrimPreserveMeansReferenceColor
-          ? '门体颜色：必须按颜色参考图调整门扇/门体可见表面颜色和材质观感；包边因客户明确要求颜色保持不变，必须保持包边参考图中包边自身的可见颜色，不参与门体统一颜色'
-          : '门体颜色：必须按颜色参考图调整门扇/门体可见表面颜色和材质观感；包边因客户明确要求独立颜色，按客户包边颜色或包边参考图颜色执行')
-        : '整门颜色：默认必须按颜色参考图统一调整整门可见门面颜色和材质观感，包含包边/门套同色；如补充要求指定局部不同颜色，则按指定部件优先')
+          ? `门体颜色：必须按颜色参考图调整门扇/门体可见表面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}；包边因客户明确要求颜色保持不变，必须保持包边参考图中包边自身的可见颜色，不参与门体统一颜色`
+          : `门体颜色：必须按颜色参考图调整门扇/门体可见表面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}；包边因客户明确要求独立颜色，按客户包边颜色或包边参考图颜色执行`)
+        : `整门颜色：默认必须按颜色参考图统一调整整门可见门面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}，包含包边/门套同色；如补充要求指定局部不同颜色，则按指定部件优先`)
       : ''
   ].filter(Boolean);
   const requiredReferenceTaskInstruction = requiredReferenceTasks.length
@@ -1003,9 +1151,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     hasColorSample
       ? (edgeTrimColorProtectedFromColorSample
         ? (edgeTrimPreserveMeansReferenceColor
-          ? '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别主色、色偏、纹理和表面质感，并默认按该颜色参考图调整门扇/门体可见表面颜色；不需要客户额外说明“改成这个颜色”。本次客户明确要求包边颜色保持不变，因此颜色参考图不得作用到包边，包边颜色保持包边参考图自身可见颜色。'
-          : '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别主色、色偏、纹理和表面质感，并默认按该颜色参考图调整门扇/门体可见表面颜色；不需要客户额外说明“改成这个颜色”。本次客户表达了包边颜色独立意图，因此包边颜色由 AI 根据客户语义判断，不参与整门统一颜色。')
-        : '高优先级指令：输入中包含颜色参考图时，AI 必须自动识别主色、色偏、纹理和表面质感，并默认按该颜色参考图统一调整整门可见门面颜色，包含包边/门套同色；不需要客户额外说明“改成这个颜色”。如果补充要求明确写了不同部件不同颜色，则按局部指定优先。')
+          ? `高优先级指令：输入中包含颜色参考图时，AI 必须自动识别主色、色偏${colorSampleUsesReferenceTexture ? '、纹理和表面质感' : ''}，并默认按该颜色参考图调整门扇/门体可见表面颜色；不需要客户额外说明“改成这个颜色”。本次客户明确要求包边颜色保持不变，因此颜色参考图不得作用到包边，包边颜色保持包边参考图自身可见颜色。`
+          : `高优先级指令：输入中包含颜色参考图时，AI 必须自动识别主色、色偏${colorSampleUsesReferenceTexture ? '、纹理和表面质感' : ''}，并默认按该颜色参考图调整门扇/门体可见表面颜色；不需要客户额外说明“改成这个颜色”。本次客户表达了包边颜色独立意图，因此包边颜色由 AI 根据客户语义判断，不参与整门统一颜色。`)
+        : `高优先级指令：输入中包含颜色参考图时，AI 必须自动识别主色、色偏${colorSampleUsesReferenceTexture ? '、纹理和表面质感' : ''}，并默认按该颜色参考图统一调整整门可见门面颜色，包含包边/门套同色；不需要客户额外说明“改成这个颜色”。如果补充要求明确写了不同部件不同颜色，则按局部指定优先。`)
       : '',
     hasEdgeTrimDetail || hasColorSample
       ? (edgeTrimColorProtectedFromColorSample
@@ -1025,6 +1173,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         targetColorCode
           ? `高优先级颜色标签约束：客户指定颜色编号/名称为 ${targetColorCode}。颜色参考图如为多色卡页面，最终颜色只能来自 ${targetColorCode} 对应的门板/色块；色名可以严格语义匹配，例如“粉白色”匹配“粉白”，但严禁使用相邻编号/名称、整页平均色、最大面积色、标题背景色或模型自行推断的近似色。`
           : '',
+        colorSampleUsesReferenceTexture
+          ? '纹理提取选项：用户已选择“同时提取色卡纹理”，因此目标色块/门板中的木纹、拉丝、颗粒、纹理方向、纹理粗细、明暗纹理色差和表面质感也属于本次颜色任务的一部分，需要随颜色一起迁移到门体可见表面。'
+          : '纹理提取选项：用户没有选择“同时提取色卡纹理”，因此颜色参考图只约束颜色、色偏、明度和饱和度；不要强制把色卡里的木纹方向、颗粒、拉丝或材质纹理迁移到门体上，原门已有纹理结构应尽量保留。',
         '颜色取样规则：颜色参考图必须按 Photoshop 吸管工具的思路执行，以图片中肉眼可见的主取样色为准。不要推断材料本身固有色，不要自动校正白平衡、环境光或拍摄偏色；看到什么颜色就用什么颜色。只避开明显高光点、反光点、深阴影、污渍和噪点。',
         colorSampleAppliesToEdgeTrim
           ? '高优先级指令：只要输入中包含颜色参考图，本次任务就默认必须执行“把整门照中的可见门面颜色统一调整为该参考颜色”的操作；这是强制目标，不需要等待客户额外说明。'
@@ -1047,8 +1198,12 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '必须保持可见取样色的色相、冷暖色偏、明度和饱和度关系。允许为了贴合原图光影做极轻微明暗过渡，但不能改变取样色本身。',
         '如果整门照环境光会让颜色看起来偏色，应优先让最终视觉颜色接近颜色参考图中的可见取样色，而不是校正成模型认为更合理的材质本色。',
         edgeTrimColorProtectedFromColorSample
-          ? '颜色任务只允许调整门扇/门体可见表面的颜色、纹理色差和必要材质观感；包边颜色按客户表达的独立包边颜色意图执行，不被颜色参考图覆盖；包边宽窄、层次和线条按包边参考图执行；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手和门框比例必须保持整门照原样。'
-          : '颜色任务默认允许统一调整整门可见门面颜色、纹理色差和必要材质观感，包括门扇、压线、同门体侧边和包边/门套等可见门面区域；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手、包边和门框比例必须保持整门照原样。',
+          ? (colorSampleUsesReferenceTexture
+            ? '颜色任务只允许调整门扇/门体可见表面的颜色、目标色卡纹理色差和必要材质观感；包边颜色按客户表达的独立包边颜色意图执行，不被颜色参考图覆盖；包边宽窄、层次和线条按包边参考图执行；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手和门框比例必须保持整门照原样。'
+            : '颜色任务只允许调整门扇/门体可见表面的颜色、色偏、明度和饱和度；不要强制迁移颜色参考图纹理；包边颜色按客户表达的独立包边颜色意图执行，不被颜色参考图覆盖；包边宽窄、层次和线条按包边参考图执行；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手和门框比例必须保持整门照原样。')
+          : (colorSampleUsesReferenceTexture
+            ? '颜色任务默认允许统一调整整门可见门面颜色、目标色卡纹理色差和必要材质观感，包括门扇、压线、同门体侧边和包边/门套等可见门面区域；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手、包边和门框比例必须保持整门照原样。'
+            : '颜色任务默认允许统一调整整门可见门面颜色、色偏、明度和饱和度，包括门扇、压线、同门体侧边和包边/门套等可见门面区域；不要强制迁移颜色参考图纹理；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手、包边和门框比例必须保持整门照原样。'),
         allowBackgroundChange
           ? '背景、抠图或白底按客户背景要求执行；颜色任务不能与背景任务互相覆盖。'
           : '墙面、地面、背景和整体构图必须保持整门照原样。',
@@ -1087,8 +1242,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       : '',
     hasColorSample
       ? (edgeTrimColorProtectedFromColorSample
-        ? '结构化需求确认：客户上传了颜色参考图，因此“默认按颜色参考调整门扇/门体可见表面颜色和材质观感”本身已经是明确需求；本次包边有独立包边约束，包边不参与门体统一颜色。'
-        : '结构化需求确认：客户上传了颜色参考图，因此“默认按颜色参考统一整门可见门面颜色和材质观感，包边跟门体同色”本身已经是明确需求；如补充要求指定局部不同颜色，则局部指定优先。')
+        ? `结构化需求确认：客户上传了颜色参考图，因此“默认按颜色参考调整门扇/门体可见表面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}”本身已经是明确需求；本次包边有独立包边约束，包边不参与门体统一颜色。`
+        : `结构化需求确认：客户上传了颜色参考图，因此“默认按颜色参考统一整门可见门面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}，包边跟门体同色”本身已经是明确需求；如补充要求指定局部不同颜色，则局部指定优先。`)
       : ''
   ].filter(Boolean).join('\n');
   const immutableBaseDoorInstruction = [
@@ -1461,7 +1616,8 @@ async function buildEditArtifacts(job) {
     referenceSlots: referenceImages.map((item) => item && item.slotId).filter(Boolean),
     referenceOptions: referenceImages.map((item) => ({
       slotId: item && item.slotId,
-      colorMode: item && item.colorMode
+      colorMode: item && item.colorMode,
+      textureMode: item && item.textureMode
     })).filter((item) => item.slotId),
     primarySize,
     detectionMode,
@@ -1616,7 +1772,8 @@ async function processJob(jobId) {
     referenceImageCount: getReferenceImages(job).length,
     referenceOptions: getReferenceImages(job).map((item) => ({
       slotId: item && item.slotId,
-      colorMode: item && item.colorMode
+      colorMode: item && item.colorMode,
+      textureMode: item && item.textureMode
     })).filter((item) => item.slotId),
     promptDecision: getPromptDecisionSummary(job),
     hasMask: !!editArtifacts.maskFile,
