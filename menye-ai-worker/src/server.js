@@ -16,7 +16,9 @@ const SECRET_ID = process.env.CLOUDBASE_SECRET_ID;
 const SECRET_KEY = process.env.CLOUDBASE_SECRET_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
-const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4.1-mini';
+const RAW_OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-5.5';
+const OPENAI_VISION_MODEL = normalizeVisionModelName(RAW_OPENAI_VISION_MODEL);
+const OPENAI_VISION_REASONING_EFFORT = process.env.OPENAI_VISION_REASONING_EFFORT || 'high';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || '';
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 180000);
 const OPENAI_IMAGE_TIMEOUT_MS = Number(process.env.OPENAI_IMAGE_TIMEOUT_MS || OPENAI_TIMEOUT_MS);
@@ -66,6 +68,24 @@ function getSanitizedBaseUrl(value) {
   } catch (error) {
     return value;
   }
+}
+
+function normalizeVisionModelName(value) {
+  const normalized = String(value || '').trim().replace(/\s+Thinking$/i, '').trim();
+  return normalized || 'gpt-5.5';
+}
+
+function getVisionResponseRequest(input) {
+  const request = {
+    model: OPENAI_VISION_MODEL,
+    input
+  };
+  if (OPENAI_VISION_REASONING_EFFORT && OPENAI_VISION_REASONING_EFFORT !== 'none') {
+    request.reasoning = {
+      effort: OPENAI_VISION_REASONING_EFFORT
+    };
+  }
+  return request;
 }
 
 function assertConfigured() {
@@ -530,9 +550,7 @@ async function detectHandleStyle(primaryBuffer, primaryFileID, handleBuffer, han
   if (!handleBuffer) {
     return null;
   }
-  const response = await openai.responses.create({
-    model: OPENAI_VISION_MODEL,
-    input: [
+  const response = await openai.responses.create(getVisionResponseRequest([
       {
         role: 'user',
         content: [
@@ -555,8 +573,7 @@ async function detectHandleStyle(primaryBuffer, primaryFileID, handleBuffer, han
           }
         ]
       }
-    ]
-  });
+    ]));
   const parsed = extractJsonObject(response.output_text || '');
   if (!parsed) {
     return null;
@@ -581,9 +598,7 @@ async function detectHandleMaskBox(primaryBuffer, primaryFileID, handleBuffer, h
   if (!primaryBuffer || !handleBuffer || !size) {
     return null;
   }
-  const response = await openai.responses.create({
-    model: OPENAI_VISION_MODEL,
-    input: [
+  const response = await openai.responses.create(getVisionResponseRequest([
       {
         role: 'user',
         content: [
@@ -610,8 +625,7 @@ async function detectHandleMaskBox(primaryBuffer, primaryFileID, handleBuffer, h
           }
         ]
       }
-    ]
-  });
+    ]));
   const text = response.output_text || '';
   const parsed = extractJsonObject(text);
   return normalizeMaskBox(parsed, size, 'vision-detected');
@@ -622,9 +636,7 @@ async function detectReferenceStyle(referenceImage, referenceBuffer) {
   if (!prompt || !referenceBuffer) {
     return null;
   }
-  const response = await openai.responses.create({
-    model: OPENAI_VISION_MODEL,
-    input: [
+  const response = await openai.responses.create(getVisionResponseRequest([
       {
         role: 'user',
         content: [
@@ -638,8 +650,7 @@ async function detectReferenceStyle(referenceImage, referenceBuffer) {
           }
         ]
       }
-    ]
-  });
+    ]));
   const parsed = extractJsonObject(response.output_text || '');
   if (!parsed) {
     return null;
@@ -1391,6 +1402,7 @@ async function requestEditedImage(jobId, inputImages, prompt, options) {
         baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
         model: OPENAI_IMAGE_MODEL,
         visionModel: OPENAI_VISION_MODEL,
+        visionReasoningEffort: OPENAI_VISION_REASONING_EFFORT || 'none',
         timeoutMs: OPENAI_IMAGE_TIMEOUT_MS
       });
       const response = await openai.images.edit({
