@@ -203,7 +203,7 @@ function getPromptDecisionSummary(job) {
   const userWantsEdgeTrimReferenceColor = userSelectedEdgeTrimReferenceColor || /(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:按|跟随|参考|保留|保持|使用|用)[^。；，,.]{0,28}(?:包边参考图|参考图|原图)[^。；，,.]{0,16}(?:颜色|色|固有色)|(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:不要|不跟|不同|独立|单独|另外|另做)[^。；，,.]{0,28}(?:同门|跟门|门体|门扇|整门|同色|统一|颜色|色)/.test(requirementText);
   const userWantsEdgeTrimPreserveColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:颜色|色|原色|本色|自身颜色|当前颜色|现在颜色)[^。；，,.]{0,16}(?:保持不变|不变|别变|不要变|不能变|保留|维持|锁定|不改|不要改|原样)|(?:保持不变|不变|别变|不要变|不能变|保留|维持|锁定|不改|不要改|原样)[^。；，,.]{0,24}(?:包边|门套|收口|压线)[^。；，,.]{0,16}(?:颜色|色|原色|本色|自身颜色|当前颜色|现在颜色)|(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:保留|保持|用|使用)[^。；，,.]{0,16}(?:原色|本色|自身颜色|当前颜色|现在颜色|原包边颜色)/.test(requirementText);
   const userWantsIndependentEdgeTrimColor = !userWantsEdgeTrimDoorColor && (userSpecifiedEdgeTrimColor || userWantsEdgeTrimReferenceColor || userWantsEdgeTrimPreserveColor);
-  const allowDoorSurfaceColorChange = hasColorSample || /门.*颜色|颜色.*门|颜色参考|色号|改色|换色|调色|变色|颜色不对|颜色再|颜色偏|YM[-\w]*/i.test(requirementText);
+  const allowDoorSurfaceColorChange = hasColorSample || hasDoorSurfaceColorTextRequest(job);
   return {
     requirementText,
     backgroundInfo,
@@ -222,7 +222,101 @@ function getPromptDecisionSummary(job) {
   };
 }
 
-function getReferenceStylePrompt(slotId) {
+function normalizeReferenceCode(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[－–—]/g, '-')
+    .replace(/\s+/g, '')
+    .toUpperCase();
+}
+
+function normalizeColorTargetName(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[“”"'「」『』]/g, '')
+    .replace(/[，。；,.!?！？、].*$/, '')
+    .replace(/^(?:为|是|叫|按|用|使用|选择|选|成|到|：|:)+/, '')
+    .replace(/(?:这个|这种|一样|一致|参考|即可|就行|颜色|色卡|色号|编号)+$/, '')
+    .trim();
+}
+
+function removeBackgroundColorText(text) {
+  return String(text || '')
+    .replace(/(?:背景|底色|底图|白底|白板|透明底|去背景|不改背景)[^。；，,.!?！？]{0,24}/g, ' ')
+    .replace(/(?:抠图|扣图|抠出来|扣出来|单独抠|单独扣)[^。；，,.!?！？]{0,24}/g, ' ');
+}
+
+function isRejectedColorTargetName(value) {
+  return /^(?:白底|白板|透明底|背景|底色|底图|不改|不变|保持|原样|参考图|包边|门套|把手|门把手|整门|门体|门扇|门板|颜色|色卡|色号|编号)$/.test(value);
+}
+
+function looksLikeColorName(value) {
+  return /黑|白|灰|粉|红|橙|黄|绿|青|蓝|紫|棕|褐|咖|米|金|银|铜|木|梨|橡|桃|胡桃|香槟|奶油|杏|卡其|莫兰迪|茶|驼|藕|铁|砂|珍珠|象牙|浅|深|暖|冷|亮|哑|雅|清|色/.test(value);
+}
+
+function getColorRequestText(job) {
+  return [
+    job && job.requirement,
+    job && job.style
+  ].filter(Boolean).join(' ');
+}
+
+function extractNamedColorTargetFromText(text) {
+  const source = removeBackgroundColorText(text);
+  const explicitPatterns = [
+    /(?:颜色参考|参考颜色|参考色|色卡(?:名称|名字)?|颜色(?:名称|名字)?|色名|门体颜色|门扇颜色|门板颜色|整门颜色|门面颜色)\s*(?:为|是|叫|选|选择|按|用|使用|要|：|:)?\s*([A-Za-z0-9#\u4e00-\u9fa5\-－–—]{1,18})/i,
+    /(?:色号|编号)\s*(?:为|是|叫|选|选择|按|用|使用|要|：|:)?\s*([A-Za-z0-9#\u4e00-\u9fa5\-－–—]{1,18})/i
+  ];
+  for (const pattern of explicitPatterns) {
+    const matched = pattern.exec(source);
+    const candidate = normalizeColorTargetName(matched && matched[1]);
+    if (candidate && !isRejectedColorTargetName(candidate)) {
+      return candidate;
+    }
+  }
+
+  const actionPatterns = [
+    /(?:门体|门扇|门板|整门|门面|颜色)?[^。；，,.!?！？]{0,8}(?:改成|换成|调成|做成|改为|设为|选|选择|用|使用|按|想要|要)\s*([A-Za-z0-9#\u4e00-\u9fa5\-－–—]{1,18})(?:色|颜色)?/i
+  ];
+  for (const pattern of actionPatterns) {
+    const matched = pattern.exec(source);
+    const candidate = normalizeColorTargetName(matched && matched[1]);
+    if (candidate && !isRejectedColorTargetName(candidate) && looksLikeColorName(candidate)) {
+      return candidate;
+    }
+  }
+  return '';
+}
+
+function extractColorReferenceTarget(job) {
+  const text = getColorRequestText(job);
+  const codeMatched = /[A-Z]{1,6}\s*[-－–—]?\s*\d{2,8}/i.exec(text);
+  if (codeMatched) {
+    return {
+      type: 'code',
+      value: normalizeReferenceCode(codeMatched[0])
+    };
+  }
+  const name = extractNamedColorTargetFromText(text);
+  return name
+    ? { type: 'name', value: name }
+    : { type: '', value: '' };
+}
+
+function extractColorReferenceCode(job) {
+  return extractColorReferenceTarget(job).value;
+}
+
+function hasDoorSurfaceColorTextRequest(job) {
+  const text = removeBackgroundColorText(getColorRequestText(job));
+  if (extractColorReferenceTarget(job).value) {
+    return true;
+  }
+  return /门.*颜色|颜色.*门|颜色参考|参考颜色|参考色|色卡|色号|编号|改色|换色|调色|变色|颜色不对|颜色再|颜色偏/i.test(text);
+}
+
+function getReferenceStylePrompt(slotId, options = {}) {
+  const targetColorCode = normalizeReferenceCode(options.targetColorCode);
   switch (slotId) {
     case 'edge-trim-detail':
       return [
@@ -241,14 +335,24 @@ function getReferenceStylePrompt(slotId) {
     case 'color-sample':
       return [
         '请像 Photoshop 吸管工具一样识别这张门体颜色参考图中肉眼可见的主取样颜色和材质特征，只返回 JSON。',
-        'JSON 格式必须为：{"part":"门体颜色","color":"...","colorFamily":"...","undertone":"...","brightness":"...","saturation":"...","hueLock":"...","toneLock":"...","material":"...","finish":"...","shape":"...","structure":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        targetColorCode
+          ? `客户明确指定颜色编号/名称：${targetColorCode}。如果图片是包含多个门板/色块的色卡页，必须先找到文字标签与 ${targetColorCode} 完全匹配或语义严格匹配的那一个门板/色块，只识别该标签对应的门体颜色；例如用户写“粉白色”可以匹配色卡里的“粉白”，用户写“莫兰迪粉”必须匹配同名或非常明确的莫兰迪粉标签。严禁选择其他编号、相邻名称、整页平均色、标题、背景或面积最大的无关色块。`
+          : '如果图片是包含多个门板/色块的色卡页，但客户没有指定编号，请选择最像客户想要门体表面颜色的主色块。',
+        targetColorCode
+          ? `sampleBox 必须框住 ${targetColorCode} 对应门板/色块上最均匀的门体表面区域，不能框编号文字、颜色名称、背景、其他编号或其他名称的门板、把手、阴影或边框。`
+          : '',
+        'JSON 格式必须为：{"part":"门体颜色","referenceCode":"...","referenceName":"...","codeMatchConfidence":"...","color":"...","colorFamily":"...","undertone":"...","brightness":"...","saturation":"...","hueLock":"...","toneLock":"...","material":"...","finish":"...","shape":"...","structure":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
         '识别时不要推断“材料本身固有色”，不要自动校正白平衡、环境光或拍摄偏色；看到什么颜色就提取什么颜色。只避开明显高光点、反光点、深阴影、污渍和噪点，从最大、最均匀、最能代表门体表面的区域取样。',
         '其中 color 表示可直接用于生成的具体可见取样色描述，不要只写“深色”“浅色”；colorFamily 表示颜色大类，例如黑、灰、白、棕、红棕、金、香槟、木色等；undertone 表示可见冷暖色偏，例如偏黄、偏红、偏灰、偏蓝、偏金；brightness 表示肉眼可见明度，例如深/中深/中/浅；saturation 表示肉眼可见饱和度，例如低饱和/中饱和/高饱和；hueLock 表示最不能漂移的可见色相约束，例如不要偏红、不要偏黄、不要偏绿、不要偏蓝；toneLock 表示最不能漂移的明暗/灰度约束，例如不要提亮、不要压暗、不要加灰、不要加暖；material 表示材质；finish 表示哑光/亮光/金属/木纹等表面质感；shape 可以写“不适用”；structure 表示纹理方向或拼色关系；details 表示取样区域、木纹、拉丝、颗粒、色差等关键细节；applyDescription 表示给图像编辑模型执行时应使用的一句话颜色描述。',
-        '如果图片里有多个颜色，请选择面积最大、最像客户想要门体表面颜色的可见主色，并在 details 里说明次要色或纹理色差。',
+        targetColorCode
+          ? `如果 ${targetColorCode} 对应门板内部有木纹明暗差，请选择该门板上面积最大、最均匀、最能代表 ${targetColorCode} 可见表面颜色的区域，并在 details 里写明“已按指定标签 ${targetColorCode} 取色”。`
+          : '如果图片里有多个颜色，请选择面积最大、最像客户想要门体表面颜色的可见主色，并在 details 里说明次要色或纹理色差。',
         'sampleBox 必须框住最适合取门体真实可见颜色的区域，坐标是相对整张图 0 到 1 的比例。必须只框色卡、门板颜色样、门体表面或材质样，不能框墙面、地面、把手、文字标签、强反光或阴影。',
-        'applyDescription 必须写成“可见取样色”描述，包含颜色大类、冷暖色偏、明度、饱和度和禁止漂移方向，例如“可见取样色为中深低饱和冷灰木色，不要偏黄或提亮”。',
+        targetColorCode
+          ? `applyDescription 必须包含“按颜色标签 ${targetColorCode} 对应门板取样”，并写成“可见取样色”描述，包含颜色大类、冷暖色偏、明度、饱和度和禁止漂移方向。`
+          : 'applyDescription 必须写成“可见取样色”描述，包含颜色大类、冷暖色偏、明度、饱和度和禁止漂移方向，例如“可见取样色为中深低饱和冷灰木色，不要偏黄或提亮”。',
         '不要解释，不要输出 markdown。'
-      ].join('\n');
+      ].filter(Boolean).join('\n');
     default:
       return '';
   }
@@ -631,8 +735,13 @@ async function detectHandleMaskBox(primaryBuffer, primaryFileID, handleBuffer, h
   return normalizeMaskBox(parsed, size, 'vision-detected');
 }
 
-async function detectReferenceStyle(referenceImage, referenceBuffer) {
-  const prompt = getReferenceStylePrompt(referenceImage && referenceImage.slotId);
+async function detectReferenceStyle(referenceImage, referenceBuffer, job) {
+  const targetColorCode = referenceImage && referenceImage.slotId === 'color-sample'
+    ? extractColorReferenceCode(job)
+    : '';
+  const prompt = getReferenceStylePrompt(referenceImage && referenceImage.slotId, {
+    targetColorCode
+  });
   if (!prompt || !referenceBuffer) {
     return null;
   }
@@ -658,6 +767,10 @@ async function detectReferenceStyle(referenceImage, referenceBuffer) {
   return {
     slotId: referenceImage.slotId || '',
     label: getReferenceSlotLabel(referenceImage.slotId),
+    referenceCode: parsed.referenceCode || targetColorCode || '',
+    referenceName: parsed.referenceName || '',
+    targetColorCode,
+    codeMatchConfidence: parsed.codeMatchConfidence || '',
     part: parsed.part || getReferenceSlotLabel(referenceImage.slotId),
     sourceType: parsed.sourceType || '',
     color: parsed.color || '',
@@ -692,7 +805,7 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
   return styles.map((style) => (
     style.slotId === 'edge-trim-detail' && !useEdgeTrimReferenceColor
       ? `系统识别到${style.label || style.part || '包边参考图'}结构特征：来源类型=${style.sourceType || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；颜色字段默认忽略，不作为最终包边颜色；执行描述=只提取包边结构、宽窄、层次、线条、纹理走向和收边方式，${edgeTrimColorFallback}`
-      : `系统识别到${style.label || style.part || '参考图'}特征：来源类型=${style.sourceType || '未识别'}；颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；颜色大类=${style.colorFamily || '未识别'}；冷暖色偏=${style.undertone || '未识别'}；明度=${style.brightness || '未识别'}；饱和度=${style.saturation || '未识别'}；色相锁定=${style.hueLock || '未识别'}；明暗/灰度锁定=${style.toneLock || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '未识别'}。`
+      : `系统识别到${style.label || style.part || '参考图'}特征：${style.referenceCode || style.referenceName || style.targetColorCode ? `指定/匹配颜色标签=${style.referenceCode || style.referenceName || style.targetColorCode}；匹配置信度=${style.codeMatchConfidence || '未说明'}；` : ''}来源类型=${style.sourceType || '未识别'}；颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；颜色大类=${style.colorFamily || '未识别'}；冷暖色偏=${style.undertone || '未识别'}；明度=${style.brightness || '未识别'}；饱和度=${style.saturation || '未识别'}；色相锁定=${style.hueLock || '未识别'}；明暗/灰度锁定=${style.toneLock || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '未识别'}。`
   )).join('\n');
 }
 
@@ -770,7 +883,10 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const colorSampleStyle = Array.isArray(referenceStyles)
     ? referenceStyles.find((style) => style && style.slotId === 'color-sample')
     : null;
-  const allowDoorSurfaceColorChange = hasColorSample || /门.*颜色|颜色.*门|颜色参考|色号|改色|换色|调色|变色|颜色不对|颜色再|颜色偏|YM[-\w]*/i.test(requirementText);
+  const targetColorCode = colorSampleStyle && (colorSampleStyle.referenceCode || colorSampleStyle.referenceName || colorSampleStyle.targetColorCode)
+    ? (colorSampleStyle.referenceCode || colorSampleStyle.referenceName || colorSampleStyle.targetColorCode)
+    : extractColorReferenceCode(job);
+  const allowDoorSurfaceColorChange = hasColorSample || hasDoorSurfaceColorTextRequest(job);
   const allowBackgroundChange = !!backgroundInfo || isCutoutRequest;
   const freezeDoorSurfaceColor = !allowDoorSurfaceColorChange;
   const hasEdgeTrimOnlyReference = hasEdgeTrimDetail && !hasHandleDetail && !allowDoorSurfaceColorChange && !allowBackgroundChange && !allowEdgeTrimColorChange;
@@ -906,6 +1022,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         edgeTrimColorProtectedFromColorSample
           ? '高优先级指令：颜色参考图是门扇/门体可见表面的默认颜色和材质观感参考来源，严格程度与门把手、包边参考图相同；但客户已经表达包边颜色独立意图时，包边颜色不参与整门统一颜色，必须按客户语义判断是保持原包边色、用包边参考图色，还是用客户指定色。'
           : '高优先级指令：颜色参考图是整门默认统一颜色和材质观感的唯一颜色参考来源，严格程度与门把手、包边参考图相同。',
+        targetColorCode
+          ? `高优先级颜色标签约束：客户指定颜色编号/名称为 ${targetColorCode}。颜色参考图如为多色卡页面，最终颜色只能来自 ${targetColorCode} 对应的门板/色块；色名可以严格语义匹配，例如“粉白色”匹配“粉白”，但严禁使用相邻编号/名称、整页平均色、最大面积色、标题背景色或模型自行推断的近似色。`
+          : '',
         '颜色取样规则：颜色参考图必须按 Photoshop 吸管工具的思路执行，以图片中肉眼可见的主取样色为准。不要推断材料本身固有色，不要自动校正白平衡、环境光或拍摄偏色；看到什么颜色就用什么颜色。只避开明显高光点、反光点、深阴影、污渍和噪点。',
         colorSampleAppliesToEdgeTrim
           ? '高优先级指令：只要输入中包含颜色参考图，本次任务就默认必须执行“把整门照中的可见门面颜色统一调整为该参考颜色”的操作；这是强制目标，不需要等待客户额外说明。'
@@ -916,7 +1035,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         edgeTrimColorProtectedFromColorSample
           ? '优先级例外：客户已经表达包边颜色独立意图，因此包边颜色按客户语义独立执行，不被整门统一颜色覆盖；其他部件只有在补充要求明确指定不同颜色时，才按局部颜色优先。'
           : '优先级例外：只有补充要求明确指定某个部件使用不同颜色时，该部件才按局部颜色优先；包边参考图默认只提供结构，不会让包边颜色脱离整门统一颜色。',
-        `颜色执行描述：${(colorSampleStyle && (colorSampleStyle.applyDescription || colorSampleStyle.color)) || '以颜色参考图中的可见主取样色、纹理和材质观感为准'}。`,
+        `颜色执行描述：${(colorSampleStyle && (colorSampleStyle.applyDescription || colorSampleStyle.color)) || (targetColorCode ? `按颜色标签 ${targetColorCode} 对应门板的可见主取样色、纹理和材质观感为准` : '以颜色参考图中的可见主取样色、纹理和材质观感为准')}。`,
         colorSampleStyle && colorSampleStyle.sampledColor
           ? `程序取样色：${describeSampledColor(colorSampleStyle.sampledColor)}。这是从照片目标区域直接取得的 RGB 中位数，只过滤极端高光和极端黑影；生成时必须优先接近这个照片可见色，不要做白平衡校正、不要去光线、不要去阴影、不要自动美化。`
           : '',
@@ -941,6 +1060,14 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
           : '',
         '如果无法精确匹配颜色，应优先保持门型结构不变，再尽量接近颜色参考图的可见取样色。'
       ].filter(Boolean).join('\n')
+    : '';
+  const textColorInstruction = !hasColorSample && targetColorCode
+    ? [
+        `高优先级文字颜色指令：客户没有上传颜色参考图，但补充要求中明确指定门体/门扇颜色为“${targetColorCode}”。这本身就是有效改色需求，不能因为没有颜色参考图而冻结门体颜色。`,
+        `请按常识理解“${targetColorCode}”的颜色含义；如果它是“粉白、莫兰迪粉、奶油白、浅灰木、银梨3号、铁灰橡木、清雅胡桃”等色卡名称或商业色名，就按该名称最直观对应的可见颜色、冷暖偏向、明度、饱和度和材质观感执行。`,
+        '文字颜色只允许改变门扇/门体可见表面的颜色、纹理色差和必要材质观感；不要因为文字颜色而重画门型、改变门板线条数量、线条位置、门扇比例、玻璃、把手或包边结构。',
+        '如果客户没有明确说包边独立颜色，包边默认跟门体同色；如果客户明确说包边颜色另做，则按局部颜色优先。'
+      ].join('\n')
     : '';
   const edgeTrimOnlyFreezeInstruction = hasEdgeTrimOnlyReference
     ? [
@@ -1064,6 +1191,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     edgeTrimStrictInstruction,
     auxiliaryReferenceInstruction,
     colorSampleStrictInstruction,
+    textColorInstruction,
     edgeTrimOnlyFreezeInstruction,
     structuredReferenceInstruction,
     modifyScopeInstruction,
@@ -1297,7 +1425,8 @@ async function buildEditArtifacts(job) {
     try {
       const style = await detectReferenceStyle(
         referenceImage,
-        referenceBuffers[referenceImage.slotId]
+        referenceBuffers[referenceImage.slotId],
+        job
       );
       if (style) {
         try {
