@@ -186,9 +186,31 @@ function getReferenceSlotLabel(slotId) {
       return '小门扇细节图';
     case 'middle-join-detail':
       return '中缝/拼接细节图';
+    case 'lock-detail':
+      return '锁体/智能锁细节图';
+    case 'panel-style-detail':
+      return '门板线条/造型细节图';
+    case 'glass-grille-detail':
+      return '玻璃/格栅细节图';
+    case 'texture-reference':
+      return '材质纹理参考图';
+    case 'background-reference':
+      return '背景参考图';
     default:
       return slotId || '参考图';
   }
+}
+
+function getDetectableReferenceSlotIds() {
+  return [
+    'edge-trim-detail',
+    'color-sample',
+    'lock-detail',
+    'panel-style-detail',
+    'glass-grille-detail',
+    'texture-reference',
+    'background-reference'
+  ];
 }
 
 function getPromptDecisionSummary(job) {
@@ -362,6 +384,56 @@ function getReferenceStylePrompt(slotId, options = {}) {
           : '因为客户没有选择提取纹理，applyDescription 不要写成强制迁移纹理；最终主要按颜色执行，原门已有纹理结构应尽量保持。',
         '不要解释，不要输出 markdown。'
       ].filter(Boolean).join('\n');
+    case 'lock-detail':
+      return [
+        '请识别这张锁体/智能锁细节参考图中的锁具外观特征，只返回 JSON。',
+        '这张图只用于锁体、锁孔、智能锁、猫眼、门铃、锁面板、锁芯和相关五金细节，不是整门款式参考。',
+        'JSON 格式必须为：{"part":"锁体/智能锁","sourceType":"近景或整门参考","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        '必须识别锁体类型、面板形状、颜色、材质、表面质感、边角、屏幕/按键/指纹区/钥匙孔/猫眼位置、锁孔开口、装饰线和安装方向。',
+        '如果参考图包含整扇门，只能提取锁具和其必要安装区域，不能迁移门扇主体、门板线条、包边、颜色或整门款式。',
+        'applyDescription 必须描述锁具应如何融合到第一张整门图的锁具区域，并强调不能改变门型结构、门板线条、包边和背景。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
+    case 'panel-style-detail':
+      return [
+        '请识别这张门板线条/造型参考图中的门板表面造型特征，只返回 JSON。',
+        '这张图只用于门板线条、压线、门芯凹凸、分割比例、浮雕、平板/凹板/凸板关系，不是整门比例或整门替换参考。',
+        'JSON 格式必须为：{"part":"门板线条/造型","sourceType":"近景或整门参考","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        '必须识别线条数量、方向、宽窄、位置关系、凹凸层次、倒角/圆角、压线截面、门芯形状、纹理和表面质感。',
+        '如果参考图包含整扇门，只能提取门板线条/造型，不要迁移把手、锁体、包边、背景、开门方向、整门比例或整门款式。',
+        'applyDescription 必须说明如何把参考门板线条/造型约束到第一张整门图的门扇表面，同时保持第一张整门图的外轮廓、宽高比例、把手位置和包边关系。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
+    case 'glass-grille-detail':
+      return [
+        '请识别这张玻璃/格栅参考图中的玻璃、镂空、格栅或透光窗外观特征，只返回 JSON。',
+        '这张图只用于玻璃/格栅区域，不是整门款式参考。',
+        'JSON 格式必须为：{"part":"玻璃/格栅","sourceType":"近景或整门参考","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        '必须识别玻璃类型（如长虹玻璃、磨砂、透明、茶玻、灰玻）、格栅材质和颜色、格栅间距、方向、边框、透光程度、反光/雾面质感、镂空形状和收边方式。',
+        '如果参考图包含整扇门，只能提取玻璃/格栅区域，不能迁移门板主体、把手、锁体、包边、背景或整门款式。',
+        'applyDescription 必须说明玻璃/格栅应如何融合到第一张整门图对应区域，并强调不得改变门扇外轮廓、门型比例和未点名结构。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
+    case 'texture-reference':
+      return [
+        '请识别这张材质纹理参考图中的表面纹理和材质观感，只返回 JSON。',
+        '这张图默认只用于木纹、拉丝、肤感、哑光、亮光、颗粒、纹理方向、纹理粗细和表面质感，不作为门型结构、包边、把手或玻璃参考。',
+        'JSON 格式必须为：{"part":"材质纹理","sourceType":"近景或材质样","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"不适用","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        '必须识别纹理方向、木纹/拉丝/颗粒类型、纹理密度、粗细、主次纹理色差、表面光泽、哑光/亮光/肤感/金属/木质等材质观感。',
+        '颜色字段只描述纹理照片中的可见颜色；除非客户明确要求或同时把这张图当作颜色参考，否则不要把材质纹理参考图的颜色当成最终门体颜色来源。',
+        'applyDescription 必须强调只迁移材质纹理和表面质感，不改变第一张整门图的门型结构、线条数量、包边、把手、锁体、玻璃或背景。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
+    case 'background-reference':
+      return [
+        '请识别这张背景参考图中的空间背景特征，只返回 JSON。',
+        '这张图只用于替换第一张整门图中门后方或门周围的背景、墙面、地面、空间、光线和场景氛围，不是门款、门体颜色、包边、把手、锁体、玻璃或材质参考。',
+        'JSON 格式必须为：{"part":"背景","sourceType":"实景或效果图","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"空间构图","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        '必须识别空间类型、墙面颜色和材质、地面颜色和材质、光线方向、明暗、透视、门应该放置的位置关系、背景层次、是否需要白底/纯色背景、是否有家具或装饰物。',
+        '如果背景参考图里也出现门，只能提取空间背景和光线氛围，不能迁移那张图里的门款、门板线条、包边、把手、锁体、玻璃或门体颜色。',
+        'applyDescription 必须说明如何把第一张整门图中的原背景替换为该参考背景，同时保持第一张整门图的门体、包边、把手、锁体、玻璃、颜色、材质和比例不被重画。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
     default:
       return '';
   }
@@ -952,6 +1024,16 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
   return styles.map((style) => (
     style.slotId === 'edge-trim-detail' && !useEdgeTrimReferenceColor
       ? `系统识别到${style.label || style.part || '包边参考图'}结构特征：来源类型=${style.sourceType || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；颜色字段默认忽略，不作为最终包边颜色；执行描述=只提取包边结构、宽窄、层次、线条、纹理走向和收边方式，${edgeTrimColorFallback}`
+      : style.slotId === 'lock-detail'
+        ? `系统识别到${style.label || style.part || '锁体/智能锁参考图'}特征：来源类型=${style.sourceType || '未识别'}；锁具颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只应用到锁体/智能锁/锁孔/猫眼等五金区域，不作为门体、包边、门板造型或背景参考'}。`
+      : style.slotId === 'panel-style-detail'
+        ? `系统识别到${style.label || style.part || '门板线条/造型参考图'}特征：来源类型=${style.sourceType || '未识别'}；线条/造型=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/凹凸层次=${style.profile || '未识别'}；边角/压线=${style.edge || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；关键细节=${style.details || '未识别'}；参考图可见颜色=${style.color || '未识别'}；颜色字段仅作为参考图信息，不作为门体改色来源；执行描述=${style.applyDescription || '只迁移门扇表面的线条、压线、凹凸和门芯造型，不迁移整门比例、包边、把手、锁体、玻璃、颜色或背景'}。`
+      : style.slotId === 'glass-grille-detail'
+        ? `系统识别到${style.label || style.part || '玻璃/格栅参考图'}特征：来源类型=${style.sourceType || '未识别'}；玻璃/格栅颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边框/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只应用到玻璃/格栅/镂空/透光窗及其收边区域，不作为门体、包边、把手、锁体或背景参考'}。`
+      : style.slotId === 'texture-reference'
+        ? `系统识别到${style.label || style.part || '材质纹理参考图'}特征：材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；纹理方向/结构=${style.structure || '未识别'}；纹理层次=${style.profile || '未识别'}；边缘/纹理过渡=${style.edge || '未识别'}；关键纹理细节=${style.details || '未识别'}；可见颜色=${style.color || '未识别'}；执行描述=${style.applyDescription || '只迁移材质纹理和表面质感，不把该参考图当成门型、包边、把手、锁体或玻璃参考；除非客户明确要求，不把该图颜色作为最终门体颜色来源'}。`
+      : style.slotId === 'background-reference'
+        ? `系统识别到${style.label || style.part || '背景参考图'}特征：来源类型=${style.sourceType || '未识别'}；空间/构图=${style.shape || '未识别'}；墙地面/结构=${style.structure || '未识别'}；空间层次=${style.profile || '未识别'}；边界/衔接=${style.edge || '未识别'}；主色=${style.color || '未识别'}；材质=${style.material || '未识别'}；光线/质感=${style.finish || '未识别'}；关键背景细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只替换背景、墙面、地面、空间和光线氛围，不把该图当成门款、包边、把手、锁体、玻璃、门体颜色或材质参考'}。`
       : `系统识别到${style.label || style.part || '参考图'}特征：${style.referenceCode || style.referenceName || style.targetColorCode ? `指定/匹配颜色标签=${style.referenceCode || style.referenceName || style.targetColorCode}；匹配置信度=${style.codeMatchConfidence || '未说明'}；` : ''}来源类型=${style.sourceType || '未识别'}；颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；颜色大类=${style.colorFamily || '未识别'}；冷暖色偏=${style.undertone || '未识别'}；明度=${style.brightness || '未识别'}；饱和度=${style.saturation || '未识别'}；色相锁定=${style.hueLock || '未识别'}；明暗/灰度锁定=${style.toneLock || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '未识别'}。`
   )).join('\n');
 }
@@ -959,6 +1041,7 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
 function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const requirementText = job && job.requirement ? String(job.requirement) : '';
   const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
+  const isDimensionAnnotationTask = /尺寸标注|尺寸|标注/.test(job && job.templateType ? String(job.templateType) : '');
   const referenceImages = getReferenceImages(job);
   const userSelectedEdgeTrimReferenceColor = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail' && item.colorMode === 'reference');
   const allowHandleColorChange = /把手.*颜色|颜色.*把手|门把手.*颜色|颜色.*门把手|调成门的颜色|改成门的颜色|同门颜色|跟门同色|与门同色/.test(requirementText);
@@ -983,10 +1066,25 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         if (item === 'door-color') {
           return '门体颜色';
         }
+        if (item === 'lock') {
+          return '锁体/智能锁';
+        }
+        if (item === 'panel-style') {
+          return '门板线条/造型';
+        }
+        if (item === 'glass-grille') {
+          return '玻璃/格栅';
+        }
+        if (item === 'material-texture') {
+          return '材质纹理';
+        }
+        if (item === 'background') {
+          return '背景';
+        }
         return item;
       }).filter(Boolean)
     : [];
-  const targetPartText = targetParts.length ? targetParts.join('、') : '门体';
+  let targetPartText = targetParts.length ? targetParts.join('、') : '门体';
   const imageLines = referenceImages.map((item, index) => {
     const label = getReferenceSlotLabel(item.slotId);
     if (index === 0) {
@@ -998,6 +1096,24 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const hasEdgeTrimDetail = referenceImages.some((item) => item.slotId === 'edge-trim-detail');
   const hasColorSample = referenceImages.some((item) => item.slotId === 'color-sample');
   const colorSampleUsesReferenceTexture = referenceImages.some((item) => item.slotId === 'color-sample' && item.textureMode === 'reference');
+  const hasLockDetail = referenceImages.some((item) => item.slotId === 'lock-detail');
+  const hasPanelStyleDetail = referenceImages.some((item) => item.slotId === 'panel-style-detail');
+  const hasGlassGrilleDetail = referenceImages.some((item) => item.slotId === 'glass-grille-detail');
+  const hasTextureReference = referenceImages.some((item) => item.slotId === 'texture-reference');
+  const hasBackgroundReference = referenceImages.some((item) => item.slotId === 'background-reference');
+  const activeTargetParts = [
+    hasHandleDetail ? '门把手' : '',
+    hasEdgeTrimDetail ? '包边' : '',
+    hasColorSample || hasDoorSurfaceColorTextRequest(job) ? '门体颜色' : '',
+    hasLockDetail ? '锁体/智能锁' : '',
+    hasPanelStyleDetail ? '门板线条/造型' : '',
+    hasGlassGrilleDetail ? '玻璃/格栅' : '',
+    hasTextureReference ? '材质纹理' : '',
+    hasBackgroundReference || backgroundInfo || /抠图|扣图|白底|透明底|去背景|去掉背景|去除背景/.test(requirementText) ? '背景/抠图' : ''
+  ].filter(Boolean);
+  targetPartText = activeTargetParts.length
+    ? activeTargetParts.join('、')
+    : (targetParts.length ? `暂无已上传局部参考图，仅按客户补充要求处理；可选部件包括：${targetParts.join('、')}` : '门体');
   const edgeTrimPreserveMeansReferenceColor = hasEdgeTrimDetail && userWantsEdgeTrimPreserveColor;
   const edgeTrimColorProtectedFromColorSample = hasEdgeTrimDetail && userWantsIndependentEdgeTrimColor;
   const colorSampleAppliesToEdgeTrim = hasColorSample && !edgeTrimColorProtectedFromColorSample;
@@ -1031,19 +1147,27 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const colorSampleStyle = Array.isArray(referenceStyles)
     ? referenceStyles.find((style) => style && style.slotId === 'color-sample')
     : null;
+  const backgroundStyle = Array.isArray(referenceStyles)
+    ? referenceStyles.find((style) => style && style.slotId === 'background-reference')
+    : null;
   const targetColorCode = colorSampleStyle && (colorSampleStyle.referenceCode || colorSampleStyle.referenceName || colorSampleStyle.targetColorCode)
     ? (colorSampleStyle.referenceCode || colorSampleStyle.referenceName || colorSampleStyle.targetColorCode)
     : extractColorReferenceCode(job);
   const allowDoorSurfaceColorChange = hasColorSample || hasDoorSurfaceColorTextRequest(job);
-  const allowBackgroundChange = !!backgroundInfo || isCutoutRequest;
+  const allowBackgroundChange = hasBackgroundReference || !!backgroundInfo || isCutoutRequest;
   const freezeDoorSurfaceColor = !allowDoorSurfaceColorChange;
   const hasEdgeTrimOnlyReference = hasEdgeTrimDetail && !hasHandleDetail && !allowDoorSurfaceColorChange && !allowBackgroundChange && !allowEdgeTrimColorChange;
   const edgeTrimScopeLimitInstruction = allowDoorSurfaceColorChange
-    ? '最高优先级限制：包边替换不是整门换款。包边任务只允许修改包边、门套线、收口条、压线和其极小衔接边缘；包边参考图默认只提供包边结构、宽窄、层次、线条和收边方式，包边颜色默认跟门扇/门体同色，并随颜色参考图一起统一；只有客户明确指定包边独立颜色、按包边参考图颜色，或要求包边颜色保持不变时，包边颜色才不跟门体同色。门扇主体造型、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯结构、五金把手必须保持整门照原样。严禁为了适配包边而重画门扇。'
-    : '最高优先级限制：包边替换不是整门换款。只允许修改包边、门套线、收口条、压线和其极小衔接边缘；包边参考图默认只提供包边结构、宽窄、层次、线条和收边方式，包边颜色默认匹配第一张整门图的门体原始颜色；严禁把门扇/门体颜色改成包边参考图颜色。门扇主体、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯造型、门面颜色、五金把手必须保持整门照原样。严禁为了适配包边而重画门扇。';
+    ? '最高优先级限制：包边替换不是整门换款。包边任务只允许修改包边、门套线、收口条、压线和其极小衔接边缘；包边参考图默认只提供包边结构、宽窄、层次、线条和收边方式，包边颜色默认跟门扇/门体同色，并随颜色参考图一起统一；只有客户明确指定包边独立颜色、按包边参考图颜色，或要求包边颜色保持不变时，包边颜色才不跟门体同色。包边任务本身不得改变门扇主体造型、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯结构和五金把手；如果本次同时上传门板线条/造型或玻璃/格栅参考图，对应目标区域只由对应参考图任务控制，不能由包边任务带动改变。严禁为了适配包边而重画门扇。'
+    : '最高优先级限制：包边替换不是整门换款。只允许修改包边、门套线、收口条、压线和其极小衔接边缘；包边参考图默认只提供包边结构、宽窄、层次、线条和收边方式，包边颜色默认匹配第一张整门图的门体原始颜色；严禁把门扇/门体颜色改成包边参考图颜色。包边任务本身不得改变门扇主体、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯造型、门面颜色和五金把手；如果本次同时上传门板线条/造型或玻璃/格栅参考图，对应目标区域只由对应参考图任务控制，不能由包边任务带动改变。严禁为了适配包边而重画门扇。';
   const requiredReferenceTasks = [
     hasHandleDetail ? '门把手：必须按门把手细节图融合/替换' : '',
     hasEdgeTrimDetail ? '包边：必须识别包边参考图中的包边结构并产生可见融合/替换效果，不能保留原包边不变' : '',
+    hasLockDetail ? '锁体/智能锁：必须按锁体/智能锁细节图处理锁具、锁孔、智能锁面板、猫眼或相关五金区域' : '',
+    hasPanelStyleDetail ? '门板线条/造型：必须按门板线条/造型细节图处理门扇表面的线条、压线、门芯凹凸或造型结构' : '',
+    hasGlassGrilleDetail ? '玻璃/格栅：必须按玻璃/格栅细节图处理玻璃、镂空、格栅、透光窗或对应装饰区域' : '',
+    hasTextureReference ? '材质纹理：必须按材质纹理参考图处理门体表面的木纹、拉丝、颗粒、肤感、哑光/亮光等纹理和表面质感' : '',
+    hasBackgroundReference ? '背景：必须按背景参考图替换背景、墙面、地面、空间和光线氛围；背景参考图不能作为门款或门体部件参考' : '',
     hasColorSample
         ? (edgeTrimColorProtectedFromColorSample
         ? (edgeTrimPreserveMeansReferenceColor
@@ -1199,11 +1323,11 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '如果整门照环境光会让颜色看起来偏色，应优先让最终视觉颜色接近颜色参考图中的可见取样色，而不是校正成模型认为更合理的材质本色。',
         edgeTrimColorProtectedFromColorSample
           ? (colorSampleUsesReferenceTexture
-            ? '颜色任务只允许调整门扇/门体可见表面的颜色、目标色卡纹理色差和必要材质观感；包边颜色按客户表达的独立包边颜色意图执行，不被颜色参考图覆盖；包边宽窄、层次和线条按包边参考图执行；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手和门框比例必须保持整门照原样。'
-            : '颜色任务只允许调整门扇/门体可见表面的颜色、色偏、明度和饱和度；不要强制迁移颜色参考图纹理；包边颜色按客户表达的独立包边颜色意图执行，不被颜色参考图覆盖；包边宽窄、层次和线条按包边参考图执行；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手和门框比例必须保持整门照原样。')
+            ? '颜色任务只允许调整门扇/门体可见表面的颜色、目标色卡纹理色差和必要材质观感；包边颜色按客户表达的独立包边颜色意图执行，不被颜色参考图覆盖；包边宽窄、层次和线条按包边参考图执行；颜色任务本身不得改变门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手和门框比例；如本次同时上传门板造型或玻璃格栅参考图，对应变化只由对应参考图任务控制。'
+            : '颜色任务只允许调整门扇/门体可见表面的颜色、色偏、明度和饱和度；不要强制迁移颜色参考图纹理；包边颜色按客户表达的独立包边颜色意图执行，不被颜色参考图覆盖；包边宽窄、层次和线条按包边参考图执行；颜色任务本身不得改变门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手和门框比例；如本次同时上传门板造型或玻璃格栅参考图，对应变化只由对应参考图任务控制。')
           : (colorSampleUsesReferenceTexture
-            ? '颜色任务默认允许统一调整整门可见门面颜色、目标色卡纹理色差和必要材质观感，包括门扇、压线、同门体侧边和包边/门套等可见门面区域；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手、包边和门框比例必须保持整门照原样。'
-            : '颜色任务默认允许统一调整整门可见门面颜色、色偏、明度和饱和度，包括门扇、压线、同门体侧边和包边/门套等可见门面区域；不要强制迁移颜色参考图纹理；门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手、包边和门框比例必须保持整门照原样。'),
+            ? '颜色任务默认允许统一调整整门可见门面颜色、目标色卡纹理色差和必要材质观感，包括门扇、压线、同门体侧边和包边/门套等可见门面区域；颜色任务本身不得改变门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手、包边和门框比例；如本次同时上传门板造型或玻璃格栅参考图，对应变化只由对应参考图任务控制。'
+            : '颜色任务默认允许统一调整整门可见门面颜色、色偏、明度和饱和度，包括门扇、压线、同门体侧边和包边/门套等可见门面区域；不要强制迁移颜色参考图纹理；颜色任务本身不得改变门型结构、门板线条数量、线条位置、凹凸深浅、玻璃、把手、包边和门框比例；如本次同时上传门板造型或玻璃格栅参考图，对应变化只由对应参考图任务控制。'),
         allowBackgroundChange
           ? '背景、抠图或白底按客户背景要求执行；颜色任务不能与背景任务互相覆盖。'
           : '墙面、地面、背景和整体构图必须保持整门照原样。',
@@ -1216,11 +1340,58 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '如果无法精确匹配颜色，应优先保持门型结构不变，再尽量接近颜色参考图的可见取样色。'
       ].filter(Boolean).join('\n')
     : '';
+  const singleDoorAdditionalPartInstruction = [
+    hasLockDetail
+      ? [
+          '锁体/智能锁边界：锁体/智能锁参考图只约束锁具、锁孔、智能锁面板、猫眼、门铃和其必要安装衔接区域。',
+          '如果参考图中包含整门，只能提取锁具外观，不能迁移参考图里的门板线条、包边、颜色、把手、背景或整门款式。',
+          '锁体/智能锁修改不得改变门扇外轮廓、门板线条数量、门型比例、包边结构和背景；除非客户明确要求，不要移动原把手位置。'
+        ].join('\n')
+      : '',
+    hasPanelStyleDetail
+      ? [
+          '门板线条/造型边界：门板线条/造型参考图只约束门扇表面的线条、压线、门芯凹凸、分割比例、浮雕或平板/凹板/凸板关系。',
+          '如果参考图中包含整门，只能提取门板表面造型，不迁移把手、锁体、包边、背景、开门方向、整门比例或整门款式。',
+          '门板造型可以影响门扇表面线条和凹凸关系，但必须保留第一张整门图的门扇外轮廓、透视角度、宽高比例、门框关系和已明确保留的把手/锁体位置。'
+        ].join('\n')
+      : '',
+    hasGlassGrilleDetail
+      ? [
+          '玻璃/格栅边界：玻璃/格栅参考图只约束玻璃、长虹玻璃、磨砂/透明/茶玻/灰玻、镂空、格栅、透光窗、边框和收边方式。',
+          '如果参考图中包含整门，只能提取玻璃/格栅区域，不迁移门板主体、把手、锁体、包边、颜色、背景或整门款式。',
+          '玻璃/格栅修改不得改变第一张整门图的外轮廓、门型比例、未点名线条结构和包边关系；没有玻璃/格栅位置时，应在不破坏门型的前提下保守融合。'
+        ].join('\n')
+      : '',
+    hasTextureReference
+      ? [
+          '材质纹理边界：材质纹理参考图只约束门体表面纹理、木纹、拉丝、颗粒、肤感、哑光/亮光、纹理方向、纹理粗细和表面质感。',
+          '材质纹理参考图默认不是颜色参考、不是门型参考、不是包边/把手/锁体/玻璃参考；除非客户明确要求，不要把该图颜色当成最终门体颜色来源。',
+          '迁移材质纹理时必须保持第一张整门图的门型结构、线条数量、线条位置、包边、把手、锁体、玻璃和背景不被重画。'
+        ].join('\n')
+      : ''
+  ].filter(Boolean).join('\n');
+  const additionalPartConflictResolutionInstruction = [
+    hasPanelStyleDetail
+      ? '冲突消解：本提示词中任何“保持门板线条、门芯造型、凹凸结构原样”的规则，都只约束门板线条/造型参考图以外的任务；客户已上传门板线条/造型参考图时，门扇表面线条、压线、凹凸和门芯造型允许按该参考图局部调整，但不能改变门扇外轮廓、比例、包边、把手、锁体、玻璃和背景。'
+      : '',
+    hasGlassGrilleDetail
+      ? '冲突消解：本提示词中任何“保持玻璃、镂空或格栅原样”的规则，都只约束玻璃/格栅参考图以外的任务；客户已上传玻璃/格栅参考图时，玻璃、格栅、镂空、透光窗及其收边允许按该参考图局部调整，但不能改变门扇外轮廓、比例、包边、把手、锁体、无关门板线条和背景。'
+      : '',
+    hasTextureReference
+      ? '冲突消解：材质纹理参考图只打开“纹理/表面质感”变化权限，不自动打开“门体改色”权限；如果没有颜色参考图或明确文字改色要求，门体可见颜色仍按原整门图保持，只让纹理方向、粗细、木纹/拉丝/颗粒和光泽质感接近参考。'
+      : '',
+    hasLockDetail
+      ? '冲突消解：锁体/智能锁参考图只打开锁具五金局部变化权限，不允许因锁具参考图改变门扇颜色、门板线条、包边、玻璃、把手位置或背景。'
+      : '',
+    hasBackgroundReference
+      ? '冲突消解：背景参考图只打开“背景/墙面/地面/空间/光线”变化权限，不允许因背景图改变门体颜色、门板线条、包边、把手、锁体、玻璃、材质纹理或门型比例。'
+      : ''
+  ].filter(Boolean).join('\n');
   const textColorInstruction = !hasColorSample && targetColorCode
     ? [
         `高优先级文字颜色指令：客户没有上传颜色参考图，但补充要求中明确指定门体/门扇颜色为“${targetColorCode}”。这本身就是有效改色需求，不能因为没有颜色参考图而冻结门体颜色。`,
         `请按常识理解“${targetColorCode}”的颜色含义；如果它是“粉白、莫兰迪粉、奶油白、浅灰木、银梨3号、铁灰橡木、清雅胡桃”等色卡名称或商业色名，就按该名称最直观对应的可见颜色、冷暖偏向、明度、饱和度和材质观感执行。`,
-        '文字颜色只允许改变门扇/门体可见表面的颜色、纹理色差和必要材质观感；不要因为文字颜色而重画门型、改变门板线条数量、线条位置、门扇比例、玻璃、把手或包边结构。',
+        '文字颜色只允许改变门扇/门体可见表面的颜色、纹理色差和必要材质观感；文字颜色任务本身不得重画门型、改变门板线条数量、线条位置、门扇比例、玻璃、把手或包边结构；如本次同时上传门板造型或玻璃格栅参考图，对应变化只由对应参考图任务控制。',
         '如果客户没有明确说包边独立颜色，包边默认跟门体同色；如果客户明确说包边颜色另做，则按局部颜色优先。'
       ].join('\n')
     : '';
@@ -1244,33 +1415,58 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? (edgeTrimColorProtectedFromColorSample
         ? `结构化需求确认：客户上传了颜色参考图，因此“默认按颜色参考调整门扇/门体可见表面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}”本身已经是明确需求；本次包边有独立包边约束，包边不参与门体统一颜色。`
         : `结构化需求确认：客户上传了颜色参考图，因此“默认按颜色参考统一整门可见门面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}，包边跟门体同色”本身已经是明确需求；如补充要求指定局部不同颜色，则局部指定优先。`)
+      : '',
+    hasLockDetail
+      ? '结构化需求确认：客户上传了锁体/智能锁细节图，因此“识别并更换/融合锁体、锁孔、智能锁、猫眼等五金细节”本身已经是明确需求。'
+      : '',
+    hasPanelStyleDetail
+      ? '结构化需求确认：客户上传了门板线条/造型细节图，因此“识别并调整门扇表面线条、压线、凹凸和门芯造型”本身已经是明确需求；该任务只作用于门扇表面造型，不等于重画整门。'
+      : '',
+    hasGlassGrilleDetail
+      ? '结构化需求确认：客户上传了玻璃/格栅细节图，因此“识别并更换/融合玻璃、格栅、镂空或透光窗细节”本身已经是明确需求。'
+      : '',
+    hasTextureReference
+      ? '结构化需求确认：客户上传了材质纹理参考图，因此“识别并迁移门体表面纹理和材质观感”本身已经是明确需求；默认不把该图颜色当成门体改色来源。'
+      : '',
+    hasBackgroundReference
+      ? '结构化需求确认：客户上传了背景参考图，因此“按背景参考图替换背景、墙面、地面、空间和光线氛围”本身已经是明确需求；背景图不是门款或门体部件参考。'
       : ''
   ].filter(Boolean).join('\n');
   const immutableBaseDoorInstruction = [
     '最高优先级不可重绘协议：最终图必须沿用第一张整门上下文图中的同一扇门，不能重新画一扇相似的门，不能重新建模，不能替换成商品渲染门。',
     '第一张整门图不是“风格参考”，而是必须被保留的底图。所有修改都必须像在这张底图上做局部修图：只覆盖被允许修改的区域，其他区域应保持原图结构和布局。',
-    '绝对冻结项：门扇外轮廓、宽高比例、透视角度、开门方向、门板分割数量、每条装饰线/压线的位置、门芯造型、凹凸深浅、玻璃/镂空位置、把手安装位置、锁体位置、门框和门扇相对比例。',
+    hasPanelStyleDetail || hasGlassGrilleDetail
+      ? '基础冻结项：门扇外轮廓、宽高比例、透视角度、开门方向、把手安装位置、锁体位置、门框和门扇相对比例必须保持第一张整门图；门板线条/凹凸/门芯造型只有在上传了门板线条/造型参考图时才允许按该参考图局部调整；玻璃/镂空/格栅只有在上传了玻璃/格栅参考图时才允许按该参考图局部调整。'
+      : '绝对冻结项：门扇外轮廓、宽高比例、透视角度、开门方向、门板分割数量、每条装饰线/压线的位置、门芯造型、凹凸深浅、玻璃/镂空位置、把手安装位置、锁体位置、门框和门扇相对比例。',
     allowDoorSurfaceColorChange
       ? (edgeTrimColorProtectedFromColorSample
-        ? '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并按客户语义判断包边独立颜色；颜色层按颜色参考图调整门扇/门体可见表面，但不得覆盖包边独立颜色；背景层只改背景或抠图白底；把手层只改把手区域。'
-        : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域；颜色层按颜色参考图统一调整整门可见门面，默认覆盖包边并让包边跟门体同色；只有客户明确要求包边独立颜色或按包边参考图颜色时，包边颜色才不参与统一；背景层只改背景或抠图白底；把手层只改把手区域。')
-      : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并让包边颜色匹配第一张整门图的原门体颜色；本次没有颜色层，门扇/门体颜色不得改变；背景层只改背景或抠图白底；把手层只改把手区域。',
+        ? '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并按客户语义判断包边独立颜色；颜色层按颜色参考图调整门扇/门体可见表面，但不得覆盖包边独立颜色；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、玻璃格栅层、材质纹理层仅在上传对应参考图时改对应区域。'
+        : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域；颜色层按颜色参考图统一调整整门可见门面，默认覆盖包边并让包边跟门体同色；只有客户明确要求包边独立颜色或按包边参考图颜色时，包边颜色才不参与统一；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、玻璃格栅层、材质纹理层仅在上传对应参考图时改对应区域。')
+      : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并让包边颜色匹配第一张整门图的原门体颜色；本次没有颜色层，门扇/门体颜色不得改变；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、玻璃格栅层、材质纹理层仅在上传对应参考图时改对应区域。',
     freezeDoorSurfaceColor ? '门体颜色冻结项：未上传颜色参考图且未明确要求改门体颜色时，门扇/门体颜色不属于允许变化项；包边同门同色时，只能改包边颜色去匹配第一张整门图的原门体颜色，不能反向改变门体颜色。' : '',
-    '如果参考图中的包边、颜色或把手与第一张整门图的门型结构冲突，必须优先保留第一张整门图的门型结构，宁可让局部融合更保守，也不能重画门扇。',
-    '失败结果定义：最终图只要出现新的门板线条数量、新的线条位置、新的浮雕/门芯图案、新的门扇比例、新的把手位置、或变成另一扇浅色/深色商品门，就属于失败，必须改回第一张整门图的门型。',
-    '不要为了白底、抠图、换颜色、换包边、更干净、更高级、更真实、更协调而重绘门扇主体。'
+    '如果参考图中的包边、颜色、把手、锁体、门板造型、玻璃格栅、材质纹理或背景与第一张整门图的基础门型冲突，必须优先保留第一张整门图的门体外轮廓、比例、透视和门框关系；只有对应目标区域允许局部融合，不能扩展成整门重画。',
+    hasPanelStyleDetail || hasGlassGrilleDetail
+      ? '失败结果定义：除门板线条/造型参考图和玻璃/格栅参考图明确对应的目标区域外，最终图只要出现新的门扇比例、新的把手位置、新的锁体位置、无关区域的新门板线条、无关区域的新玻璃位置、或变成另一扇浅色/深色商品门，就属于失败，必须改回第一张整门图的基础门型。'
+      : '失败结果定义：最终图只要出现新的门板线条数量、新的线条位置、新的浮雕/门芯图案、新的门扇比例、新的把手位置、或变成另一扇浅色/深色商品门，就属于失败，必须改回第一张整门图的门型。',
+    '不要为了白底、抠图、换颜色、换包边、换锁体、换玻璃格栅、迁移纹理、更干净、更高级、更真实、更协调而重绘门扇主体。'
   ].filter(Boolean).join('\n');
   const doorIdentityLockInstruction = [
     '最高优先级门型锁定：第一张整门上下文图是最终输出的唯一门型基底，不是风格参考图，也不是可自由重绘的提示图。',
-    '本任务是“基于第一张整门图的局部编辑/换色/换包边”，不是“根据参考图重新生成一扇门”。',
-    '必须保留第一张整门图里的门扇外轮廓、宽高比例、开门方向、门板分割数量、线条位置、凹凸/浮雕/压线结构、玻璃位置、门芯造型、把手位置和门框相对比例。',
+    '本任务是“基于第一张整门图的局部编辑/换色/换包边/换局部部件”，不是“根据参考图重新生成一扇门”。',
+    hasPanelStyleDetail || hasGlassGrilleDetail
+      ? '必须保留第一张整门图里的门扇外轮廓、宽高比例、开门方向、把手位置、锁体位置和门框相对比例；门板分割、线条位置、凹凸/浮雕/压线结构、玻璃位置和门芯造型只有在对应上传参考图明确要求时，才允许在对应目标区域内局部调整。'
+      : '必须保留第一张整门图里的门扇外轮廓、宽高比例、开门方向、门板分割数量、线条位置、凹凸/浮雕/压线结构、玻璃位置、门芯造型、把手位置和门框相对比例。',
     edgeTrimColorProtectedFromColorSample
-      ? '包边参考图只约束包边/门套线/收口条/压线区域的结构、宽窄、层次、线条和收边方式；颜色参考图约束门扇/门体可见表面颜色、纹理色差和材质观感，但本次包边颜色按客户独立颜色意图执行；门把手细节图只约束门把手区域；背景文字只约束背景或抠图。'
-      : '包边参考图只约束包边/门套线/收口条/压线区域的结构、宽窄、层次、线条和收边方式；颜色参考图默认约束整门可见门面颜色、纹理色差和材质观感，包含包边同色；门把手细节图只约束门把手区域；背景文字只约束背景或抠图。',
+      ? '包边参考图只约束包边/门套线/收口条/压线区域的结构、宽窄、层次、线条和收边方式；颜色参考图约束门扇/门体可见表面颜色、纹理色差和材质观感，但本次包边颜色按客户独立颜色意图执行；门把手细节图只约束门把手区域；锁体/智能锁参考图只约束锁具五金区域；门板造型参考图只约束门扇表面线条/凹凸/门芯造型；玻璃/格栅参考图只约束玻璃/格栅/镂空/透光窗区域；材质纹理参考图只约束门体表面纹理和质感；背景参考图和背景文字只约束背景、墙面、地面、空间和光线或抠图。'
+      : '包边参考图只约束包边/门套线/收口条/压线区域的结构、宽窄、层次、线条和收边方式；颜色参考图默认约束整门可见门面颜色、纹理色差和材质观感，包含包边同色；门把手细节图只约束门把手区域；锁体/智能锁参考图只约束锁具五金区域；门板造型参考图只约束门扇表面线条/凹凸/门芯造型；玻璃/格栅参考图只约束玻璃/格栅/镂空/透光窗区域；材质纹理参考图只约束门体表面纹理和质感；背景参考图和背景文字只约束背景、墙面、地面、空间和光线或抠图。',
     freezeDoorSurfaceColor ? '没有颜色参考图或明确改门色要求时，必须保留第一张整门图的门体原始颜色；包边参考图不能作为门体颜色来源。' : '',
-    '如果最终图的门板线条数量、线条位置、门芯造型、门扇比例、把手位置、开门方向或门框比例与第一张整门图明显不同，应视为失败结果，必须改回第一张整门图的门型结构。',
-    '不要把第一张整门图重画成另一款门，不要新增或删除门板装饰线，不要把平板门改成浮雕门，也不要把浮雕门改成平板门。',
-    '即使用户要求白底、抠图、改颜色或换包边，也只能在第一张整门图的门型结构上完成，不得生成一扇新的商品门。'
+    hasPanelStyleDetail || hasGlassGrilleDetail
+      ? '如果最终图在目标区域以外的门板线条数量、线条位置、门芯造型、门扇比例、把手位置、锁体位置、开门方向或门框比例与第一张整门图明显不同，应视为失败结果，必须改回第一张整门图的基础门型。'
+      : '如果最终图的门板线条数量、线条位置、门芯造型、门扇比例、把手位置、开门方向或门框比例与第一张整门图明显不同，应视为失败结果，必须改回第一张整门图的门型结构。',
+    hasPanelStyleDetail
+      ? '不要把第一张整门图重画成另一款门；门板线条/造型参考只能在门扇表面目标区域内改变线条、压线、凹凸和门芯关系，不能带动包边、把手、锁体、玻璃、门扇比例和背景改变。'
+      : '不要把第一张整门图重画成另一款门，不要新增或删除门板装饰线，不要把平板门改成浮雕门，也不要把浮雕门改成平板门。',
+    '即使用户要求白底、抠图、换背景、改颜色、换包边、换锁体、换玻璃格栅或迁移材质纹理，也只能在第一张整门图的基础门型上完成，不得生成一扇新的商品门。'
   ].filter(Boolean).join('\n');
   const cutoutPreservationInstruction = isCutoutRequest
     ? [
@@ -1279,17 +1475,28 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '抠图后即使背景变成白底，也不能因为画面更干净而重新生成门板造型、门芯花纹、把手位置或门框结构。'
       ].join('\n')
     : '';
-  const backgroundInstruction = backgroundInfo
+  const backgroundInstruction = hasBackgroundReference
     ? [
-        `背景要求：${backgroundInfo}`,
-        '客户填写了背景信息，因此允许按该背景要求调整门后空间、墙面、地面、光线或场景氛围。',
-        '背景调整只控制背景、空间、墙面、地面、光线或抠图白底效果；不能改变门型结构、门框比例、把手位置，也不能改变门扇/门体原始颜色或覆盖包边、颜色等其他已明确目标任务。'
-      ].join('\n')
-    : [
-        '背景要求：未填写。',
-        '高优先级指令：客户没有填写背景信息，因此默认不改背景。',
-        '必须保留整门照中的原背景、墙面、地面、空间、光线方向和整体构图；不要为了更高级、更协调或更真实而主动替换、虚化、美化或重绘背景。'
-      ].join('\n');
+        `背景要求：${backgroundInfo || '按上传的背景参考图替换背景'}`,
+        '客户上传了背景参考图，因此允许并且必须把第一张整门图中的原背景、墙面、地面、空间和光线氛围替换为背景参考图对应效果。',
+        backgroundStyle && backgroundStyle.applyDescription
+          ? `背景执行描述：${backgroundStyle.applyDescription}`
+          : '',
+        '背景参考图只控制背景、墙面、地面、空间、透视、光线和场景氛围；不能把背景参考图里的门款、门板线条、包边、把手、锁体、玻璃、门体颜色或材质迁移到主门上。',
+        '换背景时必须保留第一张整门图中的门体、门扇外轮廓、门框比例、包边、把手、锁体、玻璃、门体颜色、材质纹理和已经执行的其他局部部件任务。',
+        '最终效果应像把原门自然放进背景参考图的空间中：门与背景透视、接地、阴影和光线要协调，但不能为了协调而重画门。'
+      ].filter(Boolean).join('\n')
+    : backgroundInfo
+      ? [
+          `背景要求：${backgroundInfo}`,
+          '客户填写了背景信息，因此允许按该背景要求调整门后空间、墙面、地面、光线或场景氛围。',
+          '背景调整只控制背景、空间、墙面、地面、光线或抠图白底效果；不能改变门型结构、门框比例、把手位置，也不能改变门扇/门体原始颜色或覆盖包边、颜色等其他已明确目标任务。'
+        ].join('\n')
+      : [
+          '背景要求：未填写。',
+          '高优先级指令：客户没有上传背景参考图，也没有填写背景信息，因此默认不改背景。',
+          '必须保留整门照中的原背景、墙面、地面、空间、光线方向和整体构图；不要为了更高级、更协调或更真实而主动替换、虚化、美化或重绘背景。'
+        ].join('\n');
   const modifyScopeInstruction = job && job.actionType === 'modify'
     ? [
         '高优先级指令：本次任务是继续修改，只允许执行用户这一次明确提出的修改要求；已有成功结果中的其他区域保持不变。',
@@ -1322,6 +1529,16 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     '门型锁定、参考图自动识别、包边独立替换、颜色分层、背景边界和未点名区域冻结都由系统提示词自动处理。',
     '除非客户非常明确地点名要覆盖某个部件的颜色、样式或背景，否则补充要求不能削弱已上传参考图对应的自动任务。'
   ].join('\n');
+  const dimensionAnnotationInstruction = isDimensionAnnotationTask
+    ? [
+        '尺寸标注任务：本次用途是“尺寸标注图”，输出应是在第一张整门照上叠加清晰、工整、可读的尺寸辅助线、箭头、引线和文字标注。',
+        '标注优先级：优先标注客户在补充要求中给出的具体尺寸值；常见项目包括门洞宽、门洞高、门扇宽、门扇高、墙体厚度/门套厚度、门套线宽、包边宽、把手中心离地、锁体中心离地、合页位置、玻璃/格栅区域尺寸和开启方向。',
+        '严禁编造尺寸：如果客户没有提供某个具体数值，不要凭空写 900mm、2100mm 等数字；可以只标注项目名称，如“门洞宽”“门扇高”“把手中心高”，或使用“待测”提示。',
+        '尺寸标注必须像施工沟通图：线条沿门洞、门扇、包边或五金对应边缘摆放，文字不要遮挡门体关键细节；标注应横平竖直、层级清楚、中文可读。',
+        '尺寸标注不是重新设计门。除叠加标注线、箭头和文字外，必须保持原门、包边、把手、锁体、玻璃、背景、颜色、材质、光影和构图不变。',
+        '如果客户同时上传了包边、颜色、锁体、门板造型、玻璃格栅或材质纹理参考图，先按对应任务完成局部编辑，再在最终图上叠加尺寸标注；尺寸标注不能覆盖或削弱这些局部任务。'
+      ].join('\n')
+    : '';
 
   return [
     immutableBaseDoorInstruction,
@@ -1331,6 +1548,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     `用途：${job.templateType || '门业展示'}`,
     `门类型：${job.doorType || '未指定'}`,
     `目标部件：${targetPartText}`,
+    dimensionAnnotationInstruction,
     backgroundInstruction,
     doorSurfaceColorFreezeInstruction,
     userRequirementInstruction,
@@ -1346,14 +1564,16 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     edgeTrimStrictInstruction,
     auxiliaryReferenceInstruction,
     colorSampleStrictInstruction,
+    singleDoorAdditionalPartInstruction,
+    additionalPartConflictResolutionInstruction,
     textColorInstruction,
     edgeTrimOnlyFreezeInstruction,
     structuredReferenceInstruction,
     modifyScopeInstruction,
-    !hasHandleDetail && !hasEdgeTrimDetail && !hasColorSample
+    !hasHandleDetail && !hasEdgeTrimDetail && !hasColorSample && !hasLockDetail && !hasPanelStyleDetail && !hasGlassGrilleDetail && !hasTextureReference && !hasBackgroundReference
       ? '当前没有门把手细节照，请先在整门图中识别门把手区域，仅围绕门把手及必要衔接区域做处理，不要改变原门的材质、颜色、纹理、漆面和整体结构。'
       : !hasHandleDetail
-        ? '当前没有门把手细节照，请保持整门图中的现有门把手，不要擅自改变门把手款式、颜色、材质或底座；本次应优先执行已上传参考图对应的包边或颜色任务。'
+        ? '当前没有门把手细节照，请保持整门图中的现有门把手，不要擅自改变门把手款式、颜色、材质或底座；本次应优先执行已上传参考图对应的包边、颜色、锁体、门板造型、玻璃格栅、材质纹理或背景任务。'
         : [
           '高优先级指令：只要输入中包含门把手细节图，本次任务就默认必须执行“把该门把手融合到整门照中”的操作；这是强制目标，不需要等待客户额外说明。',
           '高优先级指令：整门上下文图是最终输出的唯一基底图，必须保留其门扇、门框、材质、颜色、纹理、漆面、表面工艺、光影和整体结构，不得重绘成其他材质或风格。',
@@ -1535,7 +1755,8 @@ async function buildEditArtifacts(job) {
   let detectionMode = 'none';
   let handleStyle = null;
   const referenceStyles = [];
-  const hasMultiPartReference = referenceImages.some((item) => item && ['edge-trim-detail', 'color-sample'].includes(item.slotId));
+  const detectableReferenceSlotIds = getDetectableReferenceSlotIds();
+  const hasMultiPartReference = referenceImages.some((item) => item && detectableReferenceSlotIds.includes(item.slotId));
   if (handleDetail) {
     try {
       handleStyle = await detectHandleStyle(
@@ -1574,7 +1795,7 @@ async function buildEditArtifacts(job) {
     }
   }
   for (const referenceImage of referenceImages) {
-    if (!referenceImage || !['edge-trim-detail', 'color-sample'].includes(referenceImage.slotId)) {
+    if (!referenceImage || !detectableReferenceSlotIds.includes(referenceImage.slotId)) {
       continue;
     }
     try {
@@ -1613,6 +1834,7 @@ async function buildEditArtifacts(job) {
     hasHandleDetail: !!handleDetail,
     hasEdgeTrimDetail: referenceImages.some((item) => item && item.slotId === 'edge-trim-detail'),
     hasColorSample: referenceImages.some((item) => item && item.slotId === 'color-sample'),
+    hasBackgroundReference: referenceImages.some((item) => item && item.slotId === 'background-reference'),
     referenceSlots: referenceImages.map((item) => item && item.slotId).filter(Boolean),
     referenceOptions: referenceImages.map((item) => ({
       slotId: item && item.slotId,
@@ -1768,6 +1990,7 @@ async function processJob(jobId) {
     hasHandleDetail: !!getHandleDetailImage(job),
     hasEdgeTrimDetail: getReferenceImages(job).some((item) => item && item.slotId === 'edge-trim-detail'),
     hasColorSample: getReferenceImages(job).some((item) => item && item.slotId === 'color-sample'),
+    hasBackgroundReference: getReferenceImages(job).some((item) => item && item.slotId === 'background-reference'),
     referenceSlots: getReferenceImages(job).map((item) => item && item.slotId).filter(Boolean),
     referenceImageCount: getReferenceImages(job).length,
     referenceOptions: getReferenceImages(job).map((item) => ({
