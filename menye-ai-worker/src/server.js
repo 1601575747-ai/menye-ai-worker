@@ -1091,13 +1091,6 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       }).filter(Boolean)
     : [];
   let targetPartText = targetParts.length ? targetParts.join('、') : '门体';
-  const imageLines = referenceImages.map((item, index) => {
-    const label = getReferenceSlotLabel(item.slotId);
-    if (index === 0) {
-      return `参考图${index + 1}：${label}。这是唯一底图和唯一门型来源，最终必须像在这张图上做局部编辑。`;
-    }
-    return `参考图${index + 1}：${label}。这只是对应部件参考，不能作为整门底图或整门款式参考。`;
-  });
   const hasHandleDetail = referenceImages.some((item) => item.slotId === 'handle-detail');
   const hasEdgeTrimDetail = referenceImages.some((item) => item.slotId === 'edge-trim-detail');
   const hasColorSample = referenceImages.some((item) => item.slotId === 'color-sample');
@@ -1107,6 +1100,18 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const hasGlassGrilleDetail = referenceImages.some((item) => item.slotId === 'glass-grille-detail');
   const hasTextureReference = referenceImages.some((item) => item.slotId === 'texture-reference');
   const hasBackgroundReference = referenceImages.some((item) => item.slotId === 'background-reference');
+  const imageLines = referenceImages.map((item, index) => {
+    const label = getReferenceSlotLabel(item.slotId);
+    if (index === 0) {
+      return hasBackgroundReference
+        ? `参考图${index + 1}：${label}。这是唯一门体来源和门型来源，不是最终背景底图；最终必须从这张图中抠出门体，贴入背景参考图的目标门位。`
+        : `参考图${index + 1}：${label}。这是唯一底图和唯一门型来源，最终必须像在这张图上做局部编辑。`;
+    }
+    if (item.slotId === 'background-reference') {
+      return `参考图${index + 1}：${label}。这是最终输出的背景底图和画布来源，必须原样保留墙面、地面、家具、装饰、光线和空间构图；只允许在目标门位贴入参考图1的门。`;
+    }
+    return `参考图${index + 1}：${label}。这只是对应部件参考，不能作为整门底图或整门款式参考。`;
+  });
   const useDefaultWhiteBoardBackground = isPartsComposeTask;
   const activeTargetParts = [
     hasHandleDetail ? '门把手' : '',
@@ -1444,8 +1449,12 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       : ''
   ].filter(Boolean).join('\n');
   const immutableBaseDoorInstruction = [
-    '最高优先级不可重绘协议：最终图必须沿用第一张整门上下文图中的同一扇门，不能重新画一扇相似的门，不能重新建模，不能替换成商品渲染门。',
-    '第一张整门图不是“风格参考”，而是必须被保留的底图。所有修改都必须像在这张底图上做局部修图：只覆盖被允许修改的区域，其他区域应保持原图结构和布局。',
+    hasBackgroundReference
+      ? '最高优先级场景合成协议：最终图必须以背景参考图作为画布底图，以第一张整门上下文图作为唯一门体来源；任务是把第一张图里的门抠出并贴入背景参考图目标门位，不是把第一张图的背景保留下来。'
+      : '最高优先级不可重绘协议：最终图必须沿用第一张整门上下文图中的同一扇门，不能重新画一扇相似的门，不能重新建模，不能替换成商品渲染门。',
+    hasBackgroundReference
+      ? '第一张整门图不是最终底图，而是门体抠图来源；背景参考图才是最终底图。必须保留第一张图的门型、颜色、包边、把手、锁体、玻璃和材质，同时保留背景参考图的墙面、地面、家具、装饰和空间构图。'
+      : '第一张整门图不是“风格参考”，而是必须被保留的底图。所有修改都必须像在这张底图上做局部修图：只覆盖被允许修改的区域，其他区域应保持原图结构和布局。',
     hasPanelStyleDetail || hasGlassGrilleDetail
       ? '基础冻结项：门扇外轮廓、宽高比例、透视角度、开门方向、把手安装位置、锁体位置、门框和门扇相对比例必须保持第一张整门图；门板线条/凹凸/门芯造型只有在上传了门板线条/造型参考图时才允许按该参考图局部调整；玻璃/镂空/格栅只有在上传了玻璃/格栅参考图时才允许按该参考图局部调整。'
       : '绝对冻结项：门扇外轮廓、宽高比例、透视角度、开门方向、门板分割数量、每条装饰线/压线的位置、门芯造型、凹凸深浅、玻璃/镂空位置、把手安装位置、锁体位置、门框和门扇相对比例。',
@@ -1453,7 +1462,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? (edgeTrimColorProtectedFromColorSample
         ? '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并按客户语义判断包边独立颜色；颜色层按颜色参考图调整门扇/门体可见表面，但不得覆盖包边独立颜色；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、玻璃格栅层、材质纹理层仅在上传对应参考图时改对应区域。'
         : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域；颜色层按颜色参考图统一调整整门可见门面，默认覆盖包边并让包边跟门体同色；只有客户明确要求包边独立颜色或按包边参考图颜色时，包边颜色才不参与统一；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、玻璃格栅层、材质纹理层仅在上传对应参考图时改对应区域。')
-      : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并让包边颜色匹配第一张整门图的原门体颜色；本次没有颜色层，门扇/门体颜色不得改变；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、玻璃格栅层、材质纹理层仅在上传对应参考图时改对应区域。',
+      : hasBackgroundReference
+        ? '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：背景层必须把第一张整门图的门体抠出并贴入背景参考图目标门位；门体本身不得改色、重画或换款，只允许整体缩放、透视拉伸、旋转、轻微裁切、边缘融合和接地阴影；把手层、包边层、锁体层、门板造型层、玻璃格栅层、材质纹理层仅在上传对应参考图时改对应区域。'
+        : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并让包边颜色匹配第一张整门图的原门体颜色；本次没有颜色层，门扇/门体颜色不得改变；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、玻璃格栅层、材质纹理层仅在上传对应参考图时改对应区域。',
     freezeDoorSurfaceColor ? '门体颜色冻结项：未上传颜色参考图且未明确要求改门体颜色时，门扇/门体颜色不属于允许变化项；包边同门同色时，只能改包边颜色去匹配第一张整门图的原门体颜色，不能反向改变门体颜色。' : '',
     '如果参考图中的包边、颜色、把手、锁体、门板造型、玻璃格栅、材质纹理或背景与第一张整门图的基础门型冲突，必须优先保留第一张整门图的门体外轮廓、比例、透视和门框关系；只有对应目标区域允许局部融合，不能扩展成整门重画。',
     hasPanelStyleDetail || hasGlassGrilleDetail
@@ -1569,8 +1580,12 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
 
   return [
     immutableBaseDoorInstruction,
-    '请把第一张整门上下文图当作底图，在保留原始拍摄角度和整体构图的前提下做局部编辑。',
-    '输出必须是一张基于第一张整门图编辑后的完整整门效果图，不能返回单独的门把手参考图、局部裁切图、拼贴参考图、仅展示局部的图片，也不能返回一张重新设计的新门。',
+    hasBackgroundReference
+      ? '请把背景参考图当作最终画布底图，把第一张整门上下文图当作门体抠图来源；最终图应是“背景参考图空间中安装了第一张图的门”。'
+      : '请把第一张整门上下文图当作底图，在保留原始拍摄角度和整体构图的前提下做局部编辑。',
+    hasBackgroundReference
+      ? '输出必须是一张基于背景参考图合成后的完整场景效果图，不能返回第一张整门图的原背景，不能返回单独门体、局部裁切图、拼贴参考图，也不能重新设计新门或新背景。'
+      : '输出必须是一张基于第一张整门图编辑后的完整整门效果图，不能返回单独的门把手参考图、局部裁切图、拼贴参考图、仅展示局部的图片，也不能返回一张重新设计的新门。',
     '禁止从零生成新门款；禁止把其他参考图中的整门样式迁移到第一张整门图上；禁止把第一张整门图替换成看起来相似但线条、比例、门芯或把手位置不同的新门。',
     `用途：${job.templateType || '门业展示'}`,
     `门类型：${job.doorType || '未指定'}`,
