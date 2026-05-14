@@ -845,6 +845,35 @@ function expandQuadFromCenter(quad, size, xRatio, yRatio, minPixels) {
   };
 }
 
+function expandDoorwayQuad(quad, size) {
+  if (!quad || !size || !size.width || !size.height) {
+    return quad;
+  }
+  const bounds = getQuadBounds(quad, size);
+  const expandX = Math.max(4, (bounds.right - bounds.left) * 0.01);
+  const expandTop = Math.max(3, (bounds.bottom - bounds.top) * 0.004);
+  const expandBottom = Math.max(0, (bounds.bottom - bounds.top) * 0.001);
+  return {
+    topLeft: {
+      x: clamp(Math.round(quad.topLeft.x - expandX), 0, size.width - 1),
+      y: clamp(Math.round(quad.topLeft.y - expandTop), 0, size.height - 1)
+    },
+    topRight: {
+      x: clamp(Math.round(quad.topRight.x + expandX), 0, size.width - 1),
+      y: clamp(Math.round(quad.topRight.y - expandTop), 0, size.height - 1)
+    },
+    bottomRight: {
+      x: clamp(Math.round(quad.bottomRight.x + expandX), 0, size.width - 1),
+      y: clamp(Math.round(quad.bottomRight.y + expandBottom), 0, size.height - 1)
+    },
+    bottomLeft: {
+      x: clamp(Math.round(quad.bottomLeft.x - expandX), 0, size.width - 1),
+      y: clamp(Math.round(quad.bottomLeft.y + expandBottom), 0, size.height - 1)
+    },
+    source: `${quad.source || 'quad'}-doorway-expanded`
+  };
+}
+
 function smoothstep(edge0, edge1, value) {
   const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - (2 * t));
@@ -916,7 +945,7 @@ async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placem
       const sourceY = clamp(uv.y * (sourceHeight - 1), 0, sourceHeight - 1);
       const sampled = sampleRawBilinear(source.data, sourceWidth, sourceHeight, sourceChannels, sourceX, sourceY);
       const edgeDistance = Math.min(uv.x, 1 - uv.x, uv.y, 1 - uv.y);
-      const edgeAlpha = smoothstep(0, 0.006, edgeDistance);
+      const edgeAlpha = smoothstep(0, 0.004, edgeDistance);
       const alpha = Math.round(edgeAlpha * 255);
       const targetIndex = ((y * backgroundSize.width) + x) * 4;
       overlay[targetIndex] = clamp(Math.round(sampled[0]), 0, 255);
@@ -1303,10 +1332,10 @@ async function detectDoorPlacement(primaryBuffer, primaryFileID, backgroundBuffe
               `第一张图尺寸 width=${primarySize.width}, height=${primarySize.height}。第二张图尺寸 width=${backgroundSize.width}, height=${backgroundSize.height}。`,
               `门类型：${job && job.doorType ? job.doorType : '未指定'}`,
               '请定位第一张图中“需要贴到背景里的完整门体区域”，应包含门扇、门套/包边、把手、锁体、玻璃等完整门成品，尽量贴紧外轮廓，不要包含大面积墙面、地面或无关背景。',
-              '请定位第二张图中“目标旧门/门洞/预留门位”的四个角。若背景里已有旧门，必须以旧门、旧门套、旧包边、旧门框阴影和最外层可见旧门边线的整体外轮廓四角为准，宁可略微外扩覆盖旧门残边，也不要框到旧门内口导致旧门红棕边、旧门套边或旧阴影残留。若只有门框或预留空位，以可安装新门的矩形/四边形门位为准。',
+              '请定位第二张图中“目标旧门/门洞/预留门位”的四个角。若背景里已有旧门，必须以旧门、旧门套、旧包边、旧门框阴影和最外层可见旧门边线的整体外轮廓四角为准，宁可左右和顶部略微外扩覆盖旧门残边，也不要框到旧门内口导致旧门红棕边、旧门套边或旧阴影残留。底部必须停在旧门/门套与地面接触线附近，不要框入大面积地板、踢脚线或两侧木饰面。',
               '只返回 JSON，不要解释，不要 markdown。',
               'JSON 格式必须为：{"sourceDoorBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"targetDoorQuad":{"topLeft":{"x":整数,"y":整数},"topRight":{"x":整数,"y":整数},"bottomRight":{"x":整数,"y":整数},"bottomLeft":{"x":整数,"y":整数}},"confidence":"high|medium|low","notes":"..."}。',
-              '坐标必须使用各自图片的原始像素坐标。targetDoorQuad 必须覆盖完整旧门位的最外轮廓，包括细窄旧边框、外侧压线、旧门框投影和门槛边缘；但不要框整面墙、家具、地面或无关装饰。'
+              '坐标必须使用各自图片的原始像素坐标。targetDoorQuad 必须覆盖完整旧门位的最外轮廓，包括细窄旧边框、外侧压线、旧门框投影和门槛边缘；但不要框入整面墙、家具、地面、踢脚线、左右木饰面或无关装饰。'
             ].join('\n')
           },
           {
@@ -1331,7 +1360,7 @@ async function detectDoorPlacement(primaryBuffer, primaryFileID, backgroundBuffe
   }
   return {
     sourceDoorBox,
-    targetDoorQuad: expandQuadFromCenter(targetDoorQuad, backgroundSize, 0.018, 0.012, 6),
+    targetDoorQuad: expandDoorwayQuad(targetDoorQuad, backgroundSize),
     confidence: parsed.confidence || '',
     notes: parsed.notes || ''
   };
