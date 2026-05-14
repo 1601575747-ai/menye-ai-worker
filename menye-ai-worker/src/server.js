@@ -795,6 +795,52 @@ function buildHandleMaskBuffer(width, height, box) {
   return Buffer.concat(chunks);
 }
 
+function buildAlphaMaskBuffer(width, height, box, insideAlpha, outsideAlpha) {
+  const rowLength = 1 + (width * 4);
+  const raw = Buffer.alloc(rowLength * height);
+  const innerAlpha = insideAlpha == null ? 255 : insideAlpha;
+  const outerAlpha = outsideAlpha == null ? 0 : outsideAlpha;
+  for (let y = 0; y < height; y += 1) {
+    const rowStart = y * rowLength;
+    raw[rowStart] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const pixelStart = rowStart + 1 + (x * 4);
+      const inside = x >= box.left && x < box.right && y >= box.top && y < box.bottom;
+      raw[pixelStart] = 255;
+      raw[pixelStart + 1] = 255;
+      raw[pixelStart + 2] = 255;
+      raw[pixelStart + 3] = inside ? innerAlpha : outerAlpha;
+    }
+  }
+
+  const chunks = [];
+  const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  chunks.push(pngHeader);
+
+  function createChunk(type, data) {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length, 0);
+    const typeBuffer = Buffer.from(type, 'ascii');
+    const crcInput = Buffer.concat([typeBuffer, data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE((crc32(crcInput) >>> 0), 0);
+    return Buffer.concat([length, typeBuffer, data, crc]);
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+  chunks.push(createChunk('IHDR', ihdr));
+  chunks.push(createChunk('IDAT', zlib.deflateSync(raw)));
+  chunks.push(createChunk('IEND', Buffer.alloc(0)));
+  return Buffer.concat(chunks);
+}
+
 const crcTable = (() => {
   const table = new Uint32Array(256);
   for (let n = 0; n < 256; n += 1) {
@@ -868,6 +914,18 @@ function sampleBoxToMaskBox(sampleBox, size, source) {
     right: Math.ceil((normalized.right + expandX) * size.width),
     bottom: Math.ceil((normalized.bottom + expandY) * size.height)
   }, size, source || 'sample-box');
+}
+
+function scaleMaskBox(maskBox, fromSize, toSize, source) {
+  if (!maskBox || !fromSize || !toSize || !fromSize.width || !fromSize.height || !toSize.width || !toSize.height) {
+    return null;
+  }
+  return normalizeMaskBox({
+    left: Math.round((maskBox.left / fromSize.width) * toSize.width),
+    top: Math.round((maskBox.top / fromSize.height) * toSize.height),
+    right: Math.round((maskBox.right / fromSize.width) * toSize.width),
+    bottom: Math.round((maskBox.bottom / fromSize.height) * toSize.height)
+  }, toSize, source || maskBox.source || 'scaled-mask');
 }
 
 function toDataUrl(buffer, fileID) {
@@ -1833,6 +1891,7 @@ async function buildEditArtifacts(job) {
   let maskFile = null;
   let detectionMode = 'none';
   let handleStyle = null;
+  let backgroundProtection = null;
   const referenceStyles = [];
   const detectableReferenceSlotIds = getDetectableReferenceSlotIds();
   const hasMultiPartReference = referenceImages.some((item) => item && detectableReferenceSlotIds.includes(item.slotId));
@@ -1929,6 +1988,14 @@ async function buildEditArtifacts(job) {
         detectionMode = backgroundStyle && backgroundStyle.sampleBox
           ? 'background-reference-mask'
           : 'background-reference-mask-fallback';
+        backgroundProtection = {
+          enabled: true,
+          backgroundBuffer,
+          backgroundFileID: backgroundReference.originalImageFileID,
+          maskBox: backgroundMaskBox,
+          sourceSize: backgroundSize,
+          mode: detectionMode
+        };
       }
     }
     if (backgroundBuffer) {
@@ -1988,6 +2055,13 @@ async function buildEditArtifacts(job) {
     primarySize,
     detectionMode,
     maskBox,
+    backgroundProtection: backgroundProtection ? {
+      enabled: true,
+      backgroundFileID: backgroundProtection.backgroundFileID,
+      sourceSize: backgroundProtection.sourceSize,
+      maskBox: backgroundProtection.maskBox,
+      mode: backgroundProtection.mode
+    } : null,
     handleStyle,
     referenceStyles
   });
@@ -1998,7 +2072,8 @@ async function buildEditArtifacts(job) {
     maskBox,
     detectionMode,
     handleStyle,
-    referenceStyles
+    referenceStyles,
+    backgroundProtection
   };
 }
 
@@ -2014,6 +2089,51 @@ async function readImageResponseBody(response) {
     return downloadRemoteBuffer(first.url);
   }
   throw new Error('暂时无法识别返回图片');
+}
+
+async function protectBackgroundOutsideMask(resultBuffer, protection) {
+  if (!sharp || !resultBuffer || !protection || !protection.backgroundBuffer || !protection.maskBox || !protection.sourceSize) {
+    return resultBuffer;
+  }
+  const resultMetadata = await sharp(resultBuffer).metadata();
+  const outputSize = {
+    width: resultMetadata.width || 1024,
+    height: resultMetadata.height || 1024
+  };
+  const outputMaskBox = scaleMaskBox(
+    protection.maskBox,
+    protection.sourceSize,
+    outputSize,
+    'background-output-protection-mask'
+  );
+  if (!outputMaskBox) {
+    return resultBuffer;
+  }
+  const baseBackground = await sharp(protection.backgroundBuffer)
+    .rotate()
+    .resize(outputSize.width, outputSize.height, { fit: 'fill' })
+    .png()
+    .toBuffer();
+  const alphaMask = await sharp(buildAlphaMaskBuffer(
+    outputSize.width,
+    outputSize.height,
+    outputMaskBox,
+    255,
+    0
+  ))
+    .blur(1.2)
+    .png()
+    .toBuffer();
+  const maskedGeneratedDoorway = await sharp(resultBuffer)
+    .resize(outputSize.width, outputSize.height, { fit: 'fill' })
+    .ensureAlpha()
+    .composite([{ input: alphaMask, blend: 'dest-in' }])
+    .png()
+    .toBuffer();
+  return sharp(baseBackground)
+    .composite([{ input: maskedGeneratedDoorway, left: 0, top: 0 }])
+    .png()
+    .toBuffer();
 }
 
 function shouldRetryImageApi(error) {
@@ -2159,8 +2279,20 @@ async function processJob(jobId) {
   });
   console.log('[worker] received openai response', jobId);
 
-  const resultBuffer = await readImageResponseBody(response);
+  let resultBuffer = await readImageResponseBody(response);
   console.log('[worker] parsed result buffer', jobId, resultBuffer.length);
+  if (editArtifacts.backgroundProtection) {
+    const protectedBuffer = await protectBackgroundOutsideMask(resultBuffer, editArtifacts.backgroundProtection);
+    if (protectedBuffer !== resultBuffer) {
+      resultBuffer = protectedBuffer;
+      console.log('[worker] protected background outside mask', {
+        jobId,
+        bytes: resultBuffer.length,
+        mode: editArtifacts.backgroundProtection.mode,
+        maskBox: editArtifacts.backgroundProtection.maskBox
+      });
+    }
+  }
   const resultImageFileID = await uploadResult(jobId, job.version || 1, resultBuffer);
   console.log('[worker] uploaded result image', jobId, resultImageFileID);
   const time = Date.now();
