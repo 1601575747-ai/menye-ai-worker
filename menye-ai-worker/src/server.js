@@ -901,19 +901,39 @@ function inferHandleMaskBox(size, handleBuffer, job) {
   }, size, isDoubleDoor ? 'door-type-center-heuristic' : 'door-type-side-heuristic');
 }
 
-function sampleBoxToMaskBox(sampleBox, size, source) {
+function sampleBoxToMaskBox(sampleBox, size, source, options) {
   const normalized = normalizeSampleBox(sampleBox);
   if (!normalized || !size || !size.width || !size.height) {
     return null;
   }
-  const expandX = Math.max(0.015, (normalized.right - normalized.left) * 0.035);
-  const expandY = Math.max(0.015, (normalized.bottom - normalized.top) * 0.035);
+  const expandRatio = options && Number.isFinite(Number(options.expandRatio))
+    ? Number(options.expandRatio)
+    : 0.035;
+  const minExpand = options && Number.isFinite(Number(options.minExpand))
+    ? Number(options.minExpand)
+    : 0.015;
+  const expandX = Math.max(minExpand, (normalized.right - normalized.left) * expandRatio);
+  const expandY = Math.max(minExpand, (normalized.bottom - normalized.top) * expandRatio);
   return normalizeMaskBox({
     left: Math.floor((normalized.left - expandX) * size.width),
     top: Math.floor((normalized.top - expandY) * size.height),
     right: Math.ceil((normalized.right + expandX) * size.width),
     bottom: Math.ceil((normalized.bottom + expandY) * size.height)
   }, size, source || 'sample-box');
+}
+
+function insetMaskBox(maskBox, size, insetXRatio, insetYRatio, source) {
+  if (!maskBox || !size || !size.width || !size.height) {
+    return null;
+  }
+  const width = maskBox.right - maskBox.left;
+  const height = maskBox.bottom - maskBox.top;
+  return normalizeMaskBox({
+    left: maskBox.left + Math.round(width * insetXRatio),
+    top: maskBox.top + Math.round(height * insetYRatio),
+    right: maskBox.right - Math.round(width * insetXRatio),
+    bottom: maskBox.bottom - Math.round(height * insetYRatio)
+  }, size, source || maskBox.source || 'inset-mask');
 }
 
 function scaleMaskBox(maskBox, fromSize, toSize, source) {
@@ -1979,9 +1999,27 @@ async function buildEditArtifacts(job) {
         backgroundSize,
         backgroundStyle && backgroundStyle.sampleBox
           ? 'background-doorway-vision-sample-box'
-          : 'background-doorway-fallback-center-box'
+          : 'background-doorway-fallback-center-box',
+        backgroundStyle && backgroundStyle.sampleBox
+          ? { expandRatio: 0.012, minExpand: 0.004 }
+          : { expandRatio: 0, minExpand: 0 }
       );
       if (backgroundMaskBox) {
+        const backgroundCompositeBox = backgroundStyle && backgroundStyle.sampleBox
+          ? (insetMaskBox(
+            backgroundMaskBox,
+            backgroundSize,
+            0.025,
+            0.008,
+            'background-doorway-tight-composite-box'
+          ) || backgroundMaskBox)
+          : (insetMaskBox(
+            backgroundMaskBox,
+            backgroundSize,
+            0.07,
+            0.02,
+            'background-doorway-fallback-tight-composite-box'
+          ) || backgroundMaskBox);
         const maskBuffer = buildHandleMaskBuffer(backgroundSize.width, backgroundSize.height, backgroundMaskBox);
         maskFile = await createMaskFile(maskBuffer);
         maskBox = backgroundMaskBox;
@@ -1993,6 +2031,7 @@ async function buildEditArtifacts(job) {
           backgroundBuffer,
           backgroundFileID: backgroundReference.originalImageFileID,
           maskBox: backgroundMaskBox,
+          compositeBox: backgroundCompositeBox,
           sourceSize: backgroundSize,
           mode: detectionMode
         };
@@ -2060,6 +2099,7 @@ async function buildEditArtifacts(job) {
       backgroundFileID: backgroundProtection.backgroundFileID,
       sourceSize: backgroundProtection.sourceSize,
       maskBox: backgroundProtection.maskBox,
+      compositeBox: backgroundProtection.compositeBox,
       mode: backgroundProtection.mode
     } : null,
     handleStyle,
@@ -2100,8 +2140,9 @@ async function protectBackgroundOutsideMask(resultBuffer, protection) {
     width: resultMetadata.width || 1024,
     height: resultMetadata.height || 1024
   };
+  const sourceCompositeBox = protection.compositeBox || protection.maskBox;
   const outputMaskBox = scaleMaskBox(
-    protection.maskBox,
+    sourceCompositeBox,
     protection.sourceSize,
     outputSize,
     'background-output-protection-mask'
@@ -2121,7 +2162,7 @@ async function protectBackgroundOutsideMask(resultBuffer, protection) {
     255,
     0
   ))
-    .blur(1.2)
+    .blur(0.35)
     .png()
     .toBuffer();
   const maskedGeneratedDoorway = await sharp(resultBuffer)
@@ -2289,7 +2330,8 @@ async function processJob(jobId) {
         jobId,
         bytes: resultBuffer.length,
         mode: editArtifacts.backgroundProtection.mode,
-        maskBox: editArtifacts.backgroundProtection.maskBox
+        maskBox: editArtifacts.backgroundProtection.maskBox,
+        compositeBox: editArtifacts.backgroundProtection.compositeBox
       });
     }
   }
