@@ -427,14 +427,15 @@ function getReferenceStylePrompt(slotId, options = {}) {
     case 'background-reference':
       return [
         '请识别这张背景参考图中的空间背景特征，只返回 JSON。',
-        '这张图只用于把第一张整门图里的门放入指定空间背景，并替换门后方或门周围的背景、墙面、地面、空间、光线和场景氛围，不是门款、门体颜色、包边、把手、锁体、玻璃或材质参考。',
+        '这张图是最终输出的背景底图，应尽量原样保留；本任务只是在背景图的目标门位上贴入第一张整门图里的门，不是重新生成或重绘背景。',
         'JSON 格式必须为：{"part":"背景","sourceType":"实景或效果图","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"空间构图","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
         '必须识别空间类型、墙面颜色和材质、地面颜色和材质、光线方向、明暗、透视、背景层次、是否有家具或装饰物。',
         '必须重点识别背景图中的目标门位：如果背景图里已有旧门，就把旧门外轮廓、四角、门框内口、接地点和透视方向识别为目标门位；如果背景图里留了门洞、门框、空白门位或预留矩形区域，就把该门洞/门位识别为目标门位；如果没有明确门位，就选择最合理的可放门位置。',
         'sampleBox 必须框住背景图中目标门位、旧门、门洞或预留门位的整体外接矩形，坐标是相对整张图 0 到 1 的比例；不能框整张背景，也不能框家具、墙面大面积区域或无关装饰。',
         '如果背景参考图里也出现门，只能把那扇门当作“门位、透视、尺寸和遮挡关系”的定位参考，不能迁移那张图里的门款、门板线条、包边、把手、锁体、玻璃或门体颜色。',
         'applyDescription 必须说明如何把第一张整门图中的门抠出后放入背景图目标门位：按背景门位的四边和透视自动缩放、透视拉伸、旋转、裁切或补边，使门体边缘、门框、底边接地点和背景中的门洞/旧门位置对齐。',
-        'applyDescription 还必须强调保持第一张整门图的门体、包边、把手、锁体、玻璃、颜色、材质和门款不被重画；只替换背景并做必要的透视贴合、阴影和光线融合。',
+        'applyDescription 还必须强调保持背景参考图的墙面、地面、家具、装饰、光线和空间原样；只允许覆盖旧门/门洞/目标门位区域并添加必要的接地阴影、遮挡和边缘融合。',
+        'applyDescription 还必须强调保持第一张整门图的门体、包边、把手、锁体、玻璃、颜色、材质和门款不被重画；只做抠图贴合、透视对齐、阴影和光线融合。',
         '不要解释，不要输出 markdown。'
       ].join('\n');
     default:
@@ -1036,7 +1037,7 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
       : style.slotId === 'texture-reference'
         ? `系统识别到${style.label || style.part || '材质纹理参考图'}特征：材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；纹理方向/结构=${style.structure || '未识别'}；纹理层次=${style.profile || '未识别'}；边缘/纹理过渡=${style.edge || '未识别'}；关键纹理细节=${style.details || '未识别'}；可见颜色=${style.color || '未识别'}；执行描述=${style.applyDescription || '只迁移材质纹理和表面质感，不把该参考图当成门型、包边、把手、锁体或玻璃参考；除非客户明确要求，不把该图颜色作为最终门体颜色来源'}。`
       : style.slotId === 'background-reference'
-        ? `系统识别到${style.label || style.part || '背景参考图'}特征：来源类型=${style.sourceType || '未识别'}；空间/构图=${style.shape || '未识别'}；墙地面/结构=${style.structure || '未识别'}；空间层次=${style.profile || '未识别'}；边界/衔接=${style.edge || '未识别'}；主色=${style.color || '未识别'}；材质=${style.material || '未识别'}；光线/质感=${style.finish || '未识别'}；关键背景细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只替换背景、墙面、地面、空间和光线氛围，不把该图当成门款、包边、把手、锁体、玻璃、门体颜色或材质参考'}。`
+        ? `系统识别到${style.label || style.part || '背景参考图'}特征：来源类型=${style.sourceType || '未识别'}；空间/构图=${style.shape || '未识别'}；墙地面/结构=${style.structure || '未识别'}；空间层次=${style.profile || '未识别'}；边界/衔接=${style.edge || '未识别'}；主色=${style.color || '未识别'}；材质=${style.material || '未识别'}；光线/质感=${style.finish || '未识别'}；关键背景细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '以背景参考图为最终背景底图，只在目标门位抠图贴入第一张整门图的门，不重绘墙面、地面、家具、装饰和整体空间；不把该图当成门款、包边、把手、锁体、玻璃、门体颜色或材质参考'}。`
       : `系统识别到${style.label || style.part || '参考图'}特征：${style.referenceCode || style.referenceName || style.targetColorCode ? `指定/匹配颜色标签=${style.referenceCode || style.referenceName || style.targetColorCode}；匹配置信度=${style.codeMatchConfidence || '未说明'}；` : ''}来源类型=${style.sourceType || '未识别'}；颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；颜色大类=${style.colorFamily || '未识别'}；冷暖色偏=${style.undertone || '未识别'}；明度=${style.brightness || '未识别'}；饱和度=${style.saturation || '未识别'}；色相锁定=${style.hueLock || '未识别'}；明暗/灰度锁定=${style.toneLock || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '未识别'}。`
   )).join('\n');
 }
@@ -1127,7 +1128,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const maskInstruction = maskBox
     ? `系统检测到门把手编辑区域：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。本次只允许在该区域及极小衔接边缘内编辑。`
     : hasBackgroundReference
-      ? '本次未启用区域 mask，但客户上传了背景参考图，因此背景替换是明确目标任务：必须编辑背景、墙面、地面、空间、旧门/门洞/预留门位及其必要衔接区域；不要把“无 mask”理解为不能改背景。门体本身仍以第一张整门图为准，只允许为了对齐背景门位做整体缩放、透视拉伸、旋转、轻微裁切和光影融合。'
+      ? '本次未启用区域 mask，但客户上传了背景参考图，因此抠图贴合是明确目标任务：必须把第一张整门图中的门抠出并贴入背景图的旧门/门洞/预留门位；不要把“无 mask”理解为不能处理门位。背景图整体应尽量原样保留，只允许处理目标门位、遮挡、接地阴影和边缘融合。门体本身仍以第一张整门图为准，只允许为了对齐背景门位做整体缩放、透视拉伸、旋转、轻微裁切和光影融合。'
       : useDefaultWhiteBoardBackground
         ? '本次未启用区域 mask，但门部件拼接效果图默认白板背景，因此必须编辑背景、墙面、地面和空间为干净白板效果；门体本身、部件结构、颜色和材质保持第一张整门图及已上传部件参考图约束。'
         : `本次未启用区域 mask，请仅围绕目标部件（${targetPartText}）及必要衔接区域做处理，不要扩散到背景、墙面或其他未点名区域。`;
@@ -1177,7 +1178,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     hasPanelStyleDetail ? '门板线条/造型：必须按门板线条/造型细节图处理门扇表面的线条、压线、门芯凹凸或造型结构' : '',
     hasGlassGrilleDetail ? '玻璃/格栅：必须按玻璃/格栅细节图处理玻璃、镂空、格栅、透光窗或对应装饰区域' : '',
     hasTextureReference ? '材质纹理：必须按材质纹理参考图处理门体表面的木纹、拉丝、颗粒、肤感、哑光/亮光等纹理和表面质感' : '',
-    hasBackgroundReference ? '背景：必须按背景参考图替换背景、墙面、地面、空间和光线氛围；即使客户没有填写背景信息，只要上传了背景参考图，也必须执行背景替换；背景参考图不能作为门款或门体部件参考' : '',
+    hasBackgroundReference ? '背景：必须以背景参考图为最终背景底图，把第一张整门图中的门抠出并贴入背景图目标门位；即使客户没有填写背景信息，只要上传了背景参考图，也必须执行抠图贴合；背景参考图不能作为门款或门体部件参考，也不能被整体重绘' : '',
     hasColorSample
         ? (edgeTrimColorProtectedFromColorSample
         ? (edgeTrimPreserveMeansReferenceColor
@@ -1394,7 +1395,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? '冲突消解：锁体/智能锁参考图只打开锁具五金局部变化权限，不允许因锁具参考图改变门扇颜色、门板线条、包边、玻璃、把手位置或背景。'
       : '',
     hasBackgroundReference
-      ? '冲突消解：背景参考图只打开“背景/墙面/地面/空间/光线”变化权限，不允许因背景图改变门体颜色、门板线条、包边、把手、锁体、玻璃、材质纹理或门型比例。'
+      ? '冲突消解：背景参考图只打开“在背景图目标门位抠图贴入主门”的权限，不打开重绘背景权限；不允许因背景图改变门体颜色、门板线条、包边、把手、锁体、玻璃、材质纹理或门型比例。'
       : ''
   ].filter(Boolean).join('\n');
   const textColorInstruction = !hasColorSample && targetColorCode
@@ -1439,7 +1440,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? '结构化需求确认：客户上传了材质纹理参考图，因此“识别并迁移门体表面纹理和材质观感”本身已经是明确需求；默认不把该图颜色当成门体改色来源。'
       : '',
     hasBackgroundReference
-      ? '结构化需求确认：客户上传了背景参考图，因此“按背景参考图替换背景、墙面、地面、空间和光线氛围”本身已经是明确需求；背景图不是门款或门体部件参考。'
+      ? '结构化需求确认：客户上传了背景参考图，因此“把主门抠图贴入背景图目标门位”本身已经是明确需求；背景图是最终背景底图，不是门款或门体部件参考，也不是要重绘的新背景。'
       : ''
   ].filter(Boolean).join('\n');
   const immutableBaseDoorInstruction = [
@@ -1498,8 +1499,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     : hasBackgroundReference
       ? [
           `背景要求：${backgroundInfo || '按上传的背景参考图替换背景'}`,
-          '最高优先级背景指令：客户上传了背景参考图，因此背景替换是强制目标；即使客户没有填写背景信息，也不能默认不改背景，不能保留第一张整门图的原背景。',
-          '客户上传了背景参考图，因此允许并且必须把第一张整门图中的门放入该背景参考图对应空间，并把原背景、墙面、地面、空间和光线氛围替换为背景参考图效果。',
+          '最高优先级抠图贴合指令：客户上传了背景参考图，因此必须把背景参考图作为最终背景底图，并把第一张整门图中的门抠出后贴入背景图目标门位；即使客户没有填写背景信息，也不能默认不处理背景图。',
+          '不要重新生成、重绘、改造或美化背景参考图。背景图中的墙面、地面、家具、装饰、光线和空间构图应尽量保持原样。',
           backgroundStyle && backgroundStyle.applyDescription
             ? `背景执行描述：${backgroundStyle.applyDescription}`
             : '',
@@ -1507,9 +1508,10 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
           '然后把第一张整门图中的门作为实际门体抠出并放入这个目标门位，按背景门位自动缩放、透视拉伸、旋转、裁切或补边，使门体外轮廓、门框边缘、底边和背景中的旧门/门洞/预留门位对齐。',
           '如果背景图里有旧门，最终应使用第一张整门图中的门替换旧门；旧门只提供位置、大小、透视、接地和光影参考，不能保留旧门款式，也不能迁移旧门颜色、线条、把手、锁体或包边。',
           '如果背景图里只有门洞或预留门位，最终应把第一张整门图中的门填入门洞/门位；门边缘要贴合门洞或门框，必要时做轻微透视变形和阴影融合。',
-          '背景参考图只控制背景、墙面、地面、空间、透视、光线和场景氛围；不能把背景参考图里的门款、门板线条、包边、把手、锁体、玻璃、门体颜色或材质迁移到主门上。',
+          '允许修改范围只限于：旧门/门洞/目标门位区域、主门贴合边缘、必要遮挡、接地阴影、轻微光影融合。除此之外的背景墙面、地面、家具、装饰、空间线条和整体光线尽量保持背景参考图原样。',
+          '背景参考图只提供背景底图、目标门位、透视、接地和光影参考；不能把背景参考图里的门款、门板线条、包边、把手、锁体、玻璃、门体颜色或材质迁移到主门上。',
           '换背景时必须保留第一张整门图中的门体、门扇外轮廓、门框比例、包边、把手、锁体、玻璃、门体颜色、材质纹理和已经执行的其他局部部件任务；允许的几何变化只限于为了贴合背景门位所需的整体缩放、透视拉伸、旋转和轻微裁切。',
-          '最终效果应像把原门真实安装到背景参考图的门位中：门与背景透视、接地、阴影和光线要协调，但不能为了协调而重画门。'
+          '最终效果应像把原门真实安装到背景参考图的门位中：门与背景透视、接地、阴影和光线要协调，但不能为了协调而重画门或重画背景。'
         ].filter(Boolean).join('\n')
       : backgroundInfo
       ? [
