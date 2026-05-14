@@ -814,6 +814,31 @@ function getQuadBounds(quad, size) {
   };
 }
 
+function smoothstep(edge0, edge1, value) {
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - (2 * t));
+}
+
+function sampleRawBilinear(data, width, height, channels, x, y) {
+  const x0 = clamp(Math.floor(x), 0, width - 1);
+  const y0 = clamp(Math.floor(y), 0, height - 1);
+  const x1 = clamp(x0 + 1, 0, width - 1);
+  const y1 = clamp(y0 + 1, 0, height - 1);
+  const tx = x - x0;
+  const ty = y - y0;
+  const topLeft = ((y0 * width) + x0) * channels;
+  const topRight = ((y0 * width) + x1) * channels;
+  const bottomLeft = ((y1 * width) + x0) * channels;
+  const bottomRight = ((y1 * width) + x1) * channels;
+  const result = [];
+  for (let channel = 0; channel < channels; channel += 1) {
+    const top = (data[topLeft + channel] * (1 - tx)) + (data[topRight + channel] * tx);
+    const bottom = (data[bottomLeft + channel] * (1 - tx)) + (data[bottomRight + channel] * tx);
+    result[channel] = (top * (1 - ty)) + (bottom * ty);
+  }
+  return result;
+}
+
 async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placement) {
   if (!sharp || !primaryBuffer || !backgroundBuffer || !placement || !placement.sourceDoorBox || !placement.targetDoorQuad) {
     return null;
@@ -849,37 +874,65 @@ async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placem
   if (!inverse) {
     return null;
   }
+  const shadow = Buffer.alloc(backgroundSize.width * backgroundSize.height * 4);
   for (let y = bounds.top; y < bounds.bottom; y += 1) {
     for (let x = bounds.left; x < bounds.right; x += 1) {
       const uv = applyHomography(inverse, x + 0.5, y + 0.5);
       if (!uv || uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) {
         continue;
       }
-      const sourceX = clamp(Math.round(uv.x * (sourceWidth - 1)), 0, sourceWidth - 1);
-      const sourceY = clamp(Math.round(uv.y * (sourceHeight - 1)), 0, sourceHeight - 1);
-      const sourceIndex = ((sourceY * sourceWidth) + sourceX) * sourceChannels;
+      const sourceX = clamp(uv.x * (sourceWidth - 1), 0, sourceWidth - 1);
+      const sourceY = clamp(uv.y * (sourceHeight - 1), 0, sourceHeight - 1);
+      const sampled = sampleRawBilinear(source.data, sourceWidth, sourceHeight, sourceChannels, sourceX, sourceY);
       const edgeDistance = Math.min(uv.x, 1 - uv.x, uv.y, 1 - uv.y);
-      const alpha = clamp(Math.round((edgeDistance / 0.018) * 255), 0, 255);
+      const edgeAlpha = smoothstep(0, 0.014, edgeDistance);
+      const alpha = Math.round(edgeAlpha * 255);
       const targetIndex = ((y * backgroundSize.width) + x) * 4;
-      overlay[targetIndex] = source.data[sourceIndex];
-      overlay[targetIndex + 1] = source.data[sourceIndex + 1];
-      overlay[targetIndex + 2] = source.data[sourceIndex + 2];
-      overlay[targetIndex + 3] = Math.min(alpha, source.data[sourceIndex + 3] == null ? 255 : source.data[sourceIndex + 3]);
+      overlay[targetIndex] = clamp(Math.round(sampled[0]), 0, 255);
+      overlay[targetIndex + 1] = clamp(Math.round(sampled[1]), 0, 255);
+      overlay[targetIndex + 2] = clamp(Math.round(sampled[2]), 0, 255);
+      overlay[targetIndex + 3] = Math.min(alpha, sampled[3] == null ? 255 : clamp(Math.round(sampled[3]), 0, 255));
+
+      const shadowIndex = targetIndex;
+      const verticalWeight = smoothstep(0.55, 1, uv.y);
+      const edgeWeight = 1 - smoothstep(0.035, 0.11, edgeDistance);
+      const shadowAlpha = Math.round(42 * Math.max(edgeWeight, verticalWeight * 0.55) * edgeAlpha);
+      shadow[shadowIndex] = 0;
+      shadow[shadowIndex + 1] = 0;
+      shadow[shadowIndex + 2] = 0;
+      shadow[shadowIndex + 3] = clamp(shadowAlpha, 0, 48);
     }
   }
+  const softShadow = await sharp(shadow, {
+    raw: {
+      width: backgroundSize.width,
+      height: backgroundSize.height,
+      channels: 4
+    }
+  })
+    .blur(4)
+    .png()
+    .toBuffer();
   return sharp(backgroundBuffer)
     .rotate()
     .resize(backgroundSize.width, backgroundSize.height, { fit: 'fill' })
-    .composite([{
-      input: overlay,
-      raw: {
-        width: backgroundSize.width,
-        height: backgroundSize.height,
-        channels: 4
+    .composite([
+      {
+        input: softShadow,
+        left: 0,
+        top: 0
       },
-      left: 0,
-      top: 0
-    }])
+      {
+        input: overlay,
+        raw: {
+          width: backgroundSize.width,
+          height: backgroundSize.height,
+          channels: 4
+        },
+        left: 0,
+        top: 0
+      }
+    ])
     .png()
     .toBuffer();
 }
