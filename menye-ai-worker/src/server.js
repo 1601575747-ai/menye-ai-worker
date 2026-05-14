@@ -1126,7 +1126,11 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const isCutoutRequest = /抠图|扣图|扣出来|抠出来|单独抠|单独扣|单独.*出来|白底|透明底|去背景|去掉背景|去除背景/.test(`${requirementText} ${backgroundInfo}`);
   const maskInstruction = maskBox
     ? `系统检测到门把手编辑区域：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。本次只允许在该区域及极小衔接边缘内编辑。`
-    : `本次未启用区域 mask，请仅围绕目标部件（${targetPartText}）及必要衔接区域做处理，不要扩散到背景、墙面或其他未点名区域。`;
+    : hasBackgroundReference
+      ? '本次未启用区域 mask，但客户上传了背景参考图，因此背景替换是明确目标任务：必须编辑背景、墙面、地面、空间、旧门/门洞/预留门位及其必要衔接区域；不要把“无 mask”理解为不能改背景。门体本身仍以第一张整门图为准，只允许为了对齐背景门位做整体缩放、透视拉伸、旋转、轻微裁切和光影融合。'
+      : useDefaultWhiteBoardBackground
+        ? '本次未启用区域 mask，但门部件拼接效果图默认白板背景，因此必须编辑背景、墙面、地面和空间为干净白板效果；门体本身、部件结构、颜色和材质保持第一张整门图及已上传部件参考图约束。'
+        : `本次未启用区域 mask，请仅围绕目标部件（${targetPartText}）及必要衔接区域做处理，不要扩散到背景、墙面或其他未点名区域。`;
   const handleStyleInstruction = handleStyle && (handleStyle.color || handleStyle.material || handleStyle.finish || handleStyle.shape || handleStyle.base || handleStyle.details)
     ? [
         `系统识别到门把手细节特征：颜色=${handleStyle.color || '未识别'}；材质=${handleStyle.material || '未识别'}；表面质感=${handleStyle.finish || '未识别'}；主体造型=${handleStyle.shape || '未识别'}；底座/面板=${handleStyle.base || '未识别'}；关键细节=${handleStyle.details || '未识别'}。`,
@@ -1173,7 +1177,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     hasPanelStyleDetail ? '门板线条/造型：必须按门板线条/造型细节图处理门扇表面的线条、压线、门芯凹凸或造型结构' : '',
     hasGlassGrilleDetail ? '玻璃/格栅：必须按玻璃/格栅细节图处理玻璃、镂空、格栅、透光窗或对应装饰区域' : '',
     hasTextureReference ? '材质纹理：必须按材质纹理参考图处理门体表面的木纹、拉丝、颗粒、肤感、哑光/亮光等纹理和表面质感' : '',
-    hasBackgroundReference ? '背景：必须按背景参考图替换背景、墙面、地面、空间和光线氛围；背景参考图不能作为门款或门体部件参考' : '',
+    hasBackgroundReference ? '背景：必须按背景参考图替换背景、墙面、地面、空间和光线氛围；即使客户没有填写背景信息，只要上传了背景参考图，也必须执行背景替换；背景参考图不能作为门款或门体部件参考' : '',
     hasColorSample
         ? (edgeTrimColorProtectedFromColorSample
         ? (edgeTrimPreserveMeansReferenceColor
@@ -1494,6 +1498,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     : hasBackgroundReference
       ? [
           `背景要求：${backgroundInfo || '按上传的背景参考图替换背景'}`,
+          '最高优先级背景指令：客户上传了背景参考图，因此背景替换是强制目标；即使客户没有填写背景信息，也不能默认不改背景，不能保留第一张整门图的原背景。',
           '客户上传了背景参考图，因此允许并且必须把第一张整门图中的门放入该背景参考图对应空间，并把原背景、墙面、地面、空间和光线氛围替换为背景参考图效果。',
           backgroundStyle && backgroundStyle.applyDescription
             ? `背景执行描述：${backgroundStyle.applyDescription}`
