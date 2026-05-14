@@ -168,6 +168,11 @@ function getHandleDetailImage(job) {
   return referenceImages.find((item) => item.slotId === 'handle-detail') || null;
 }
 
+function getBackgroundReferenceImage(job) {
+  const referenceImages = getReferenceImages(job);
+  return referenceImages.find((item) => item.slotId === 'background-reference') || null;
+}
+
 function getReferenceSlotLabel(slotId) {
   switch (slotId) {
     case 'full-door':
@@ -850,6 +855,21 @@ function inferHandleMaskBox(size, handleBuffer, job) {
   }, size, isDoubleDoor ? 'door-type-center-heuristic' : 'door-type-side-heuristic');
 }
 
+function sampleBoxToMaskBox(sampleBox, size, source) {
+  const normalized = normalizeSampleBox(sampleBox);
+  if (!normalized || !size || !size.width || !size.height) {
+    return null;
+  }
+  const expandX = Math.max(0.015, (normalized.right - normalized.left) * 0.035);
+  const expandY = Math.max(0.015, (normalized.bottom - normalized.top) * 0.035);
+  return normalizeMaskBox({
+    left: Math.floor((normalized.left - expandX) * size.width),
+    top: Math.floor((normalized.top - expandY) * size.height),
+    right: Math.ceil((normalized.right + expandX) * size.width),
+    bottom: Math.ceil((normalized.bottom + expandY) * size.height)
+  }, size, source || 'sample-box');
+}
+
 function toDataUrl(buffer, fileID) {
   return `data:${getMimeType(getFileExtensionFromPath(fileID, 'png'))};base64,${buffer.toString('base64')}`;
 }
@@ -1100,17 +1120,25 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const hasGlassGrilleDetail = referenceImages.some((item) => item.slotId === 'glass-grille-detail');
   const hasTextureReference = referenceImages.some((item) => item.slotId === 'texture-reference');
   const hasBackgroundReference = referenceImages.some((item) => item.slotId === 'background-reference');
-  const imageLines = referenceImages.map((item, index) => {
+  const orderedReferenceImages = hasBackgroundReference
+    ? [
+        ...referenceImages.filter((item) => item && item.slotId === 'background-reference'),
+        ...referenceImages.filter((item) => item && item.slotId === 'full-door'),
+        ...referenceImages.filter((item) => item && item.slotId !== 'background-reference' && item.slotId !== 'full-door')
+      ]
+    : referenceImages;
+  const imageLines = orderedReferenceImages.map((item, index) => {
     const label = getReferenceSlotLabel(item.slotId);
+    if (hasBackgroundReference && item.slotId === 'background-reference') {
+      return `输入图${index + 1}：${label}。这是最终输出的背景底图和画布来源；系统 mask 已限制只编辑这张图中的旧门/门洞/目标门位区域，墙面、地面、家具、装饰、光线和空间构图必须尽量保持原图。`;
+    }
+    if (hasBackgroundReference && item.slotId === 'full-door') {
+      return `输入图${index + 1}：${label}。这是唯一门体来源和门型来源；最终必须从这张图中抠出门体，贴入输入图1背景参考图的目标门位。`;
+    }
     if (index === 0) {
-      return hasBackgroundReference
-        ? `参考图${index + 1}：${label}。这是唯一门体来源和门型来源，不是最终背景底图；最终必须从这张图中抠出门体，贴入背景参考图的目标门位。`
-        : `参考图${index + 1}：${label}。这是唯一底图和唯一门型来源，最终必须像在这张图上做局部编辑。`;
+      return `参考图${index + 1}：${label}。这是唯一底图和唯一门型来源，最终必须像在这张图上做局部编辑。`;
     }
-    if (item.slotId === 'background-reference') {
-      return `参考图${index + 1}：${label}。这是最终输出的背景底图和画布来源，必须原样保留墙面、地面、家具、装饰、光线和空间构图；只允许在目标门位贴入参考图1的门。`;
-    }
-    return `参考图${index + 1}：${label}。这只是对应部件参考，不能作为整门底图或整门款式参考。`;
+    return `输入图${index + 1}：${label}。这只是对应部件参考，不能作为整门底图或整门款式参考。`;
   });
   const useDefaultWhiteBoardBackground = isPartsComposeTask;
   const activeTargetParts = [
@@ -1131,7 +1159,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const colorSampleAppliesToEdgeTrim = hasColorSample && !edgeTrimColorProtectedFromColorSample;
   const isCutoutRequest = /抠图|扣图|扣出来|抠出来|单独抠|单独扣|单独.*出来|白底|透明底|去背景|去掉背景|去除背景/.test(`${requirementText} ${backgroundInfo}`);
   const maskInstruction = maskBox
-    ? `系统检测到门把手编辑区域：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。本次只允许在该区域及极小衔接边缘内编辑。`
+    ? (hasBackgroundReference && /background|doorway|门位|背景/.test(maskBox.source || '')
+      ? `系统检测到背景图目标门位 mask：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。注意：image edit 的第一张输入图是背景参考图，mask 只开放第一张图中的旧门/门洞/目标门位区域。本次只能在该 mask 透明区域内覆盖旧门、贴入主门、做边缘融合、遮挡和接地阴影；mask 外的背景墙面、地面、家具、护墙板、踢脚线、装饰、光线和纹理必须保持原背景图，不得重画、改色、扩写或美化。`
+      : `系统检测到门把手编辑区域：left=${maskBox.left}, top=${maskBox.top}, right=${maskBox.right}, bottom=${maskBox.bottom}。本次只允许在该区域及极小衔接边缘内编辑。`)
     : hasBackgroundReference
       ? '本次未启用区域 mask，但客户上传了背景参考图，因此抠图贴合是明确目标任务：必须把第一张整门图中的门抠出并贴入背景图的旧门/门洞/预留门位；不要把“无 mask”理解为不能处理门位。背景图整体应尽量原样保留，只允许处理目标门位、遮挡、接地阴影和边缘融合。门体本身仍以第一张整门图为准，只允许为了对齐背景门位做整体缩放、透视拉伸、旋转、轻微裁切和光影融合。'
       : useDefaultWhiteBoardBackground
@@ -1577,14 +1607,25 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '如果客户同时上传了包边、颜色、锁体、门板造型、玻璃格栅或材质纹理参考图，先按对应任务完成局部编辑，再在最终图上叠加尺寸标注；尺寸标注不能覆盖或削弱这些局部任务。'
       ].join('\n')
     : '';
+  const backgroundInputOrderInstruction = hasBackgroundReference
+    ? [
+        maskBox
+          ? '输入顺序强约束：本次为了启用背景门位 mask，输入图1是背景参考图，也是最终画布底图；输入图2是整门上下文图，也是唯一门体/门型/门色/五金来源。'
+          : '输入顺序强约束：输入图1是背景参考图，也是最终画布底图；输入图2是整门上下文图，也是唯一门体/门型/门色/五金来源。',
+        '后文所有“第一张整门图”“整门上下文图”“主门图”“原门”都指输入图2这张整门图，绝不指输入图1背景图中的旧门。',
+        '输入图1中的旧门、门洞或预留门位只用于定位、透视、尺寸、接地和遮挡关系；不得把输入图1里的旧门款式、颜色、包边、把手、锁体、玻璃或材质迁移到结果门上。',
+        '最终结果应等于：输入图1背景底图 + 输入图2整门抠图贴入输入图1的 mask 门位区域；不是重新画一张室内效果图。'
+      ].join('\n')
+    : '';
 
   return [
+    backgroundInputOrderInstruction,
     immutableBaseDoorInstruction,
     hasBackgroundReference
-      ? '请把背景参考图当作最终画布底图，把第一张整门上下文图当作门体抠图来源；最终图应是“背景参考图空间中安装了第一张图的门”。'
+      ? '请把输入图1背景参考图当作最终画布底图，把输入图2整门上下文图当作门体抠图来源；最终图应是“输入图1背景空间中安装了输入图2的门”。'
       : '请把第一张整门上下文图当作底图，在保留原始拍摄角度和整体构图的前提下做局部编辑。',
     hasBackgroundReference
-      ? '输出必须是一张基于背景参考图合成后的完整场景效果图，不能返回第一张整门图的原背景，不能返回单独门体、局部裁切图、拼贴参考图，也不能重新设计新门或新背景。'
+      ? '输出必须是一张基于输入图1背景参考图合成后的完整场景效果图，不能返回输入图2整门图的原背景，不能返回单独门体、局部裁切图、拼贴参考图，也不能重新设计新门或新背景。'
       : '输出必须是一张基于第一张整门图编辑后的完整整门效果图，不能返回单独的门把手参考图、局部裁切图、拼贴参考图、仅展示局部的图片，也不能返回一张重新设计的新门。',
     '禁止从零生成新门款；禁止把其他参考图中的整门样式迁移到第一张整门图上；禁止把第一张整门图替换成看起来相似但线条、比例、门芯或把手位置不同的新门。',
     `用途：${job.templateType || '门业展示'}`,
@@ -1745,7 +1786,7 @@ async function createInputImage(fileID, sourceBuffer, fallbackName) {
 }
 
 async function createMaskFile(maskBuffer) {
-  return toFile(maskBuffer, 'handle-mask.png', {
+  return toFile(maskBuffer, 'edit-mask.png', {
     type: 'image/png'
   });
 }
@@ -1767,9 +1808,10 @@ async function buildEditArtifacts(job) {
   }
 
   const primaryBuffer = await downloadOriginalImage(primaryImage.originalImageFileID);
-  const inputImages = [await createInputImage(primaryImage.originalImageFileID, primaryBuffer, `${primaryImage.slotId || 'full-door'}.png`)];
+  let inputImages = [];
   const referenceBuffers = {};
   const handleDetail = getHandleDetailImage(job);
+  const backgroundReference = getBackgroundReferenceImage(job);
   let handleBuffer = null;
   const referenceImages = getReferenceImages(job);
   for (const referenceImage of referenceImages) {
@@ -1778,11 +1820,6 @@ async function buildEditArtifacts(job) {
     }
     const referenceBuffer = await downloadOriginalImage(referenceImage.originalImageFileID);
     referenceBuffers[referenceImage.slotId || referenceImage.originalImageFileID] = referenceBuffer;
-    inputImages.push(await createInputImage(
-      referenceImage.originalImageFileID,
-      referenceBuffer,
-      `${referenceImage.slotId || 'reference'}.png`
-    ));
     if (handleDetail && referenceImage.slotId === handleDetail.slotId) {
       handleBuffer = referenceBuffer;
     }
@@ -1870,6 +1907,66 @@ async function buildEditArtifacts(job) {
       });
     }
   }
+  if (backgroundReference) {
+    const backgroundBuffer = referenceBuffers[backgroundReference.slotId];
+    const backgroundStyle = referenceStyles.find((style) => style && style.slotId === 'background-reference');
+    const backgroundSize = getImageSize(backgroundBuffer, backgroundReference.originalImageFileID);
+    if (backgroundBuffer && backgroundSize && backgroundSize.width && backgroundSize.height) {
+      const targetDoorwayBox = backgroundStyle && backgroundStyle.sampleBox
+        ? backgroundStyle.sampleBox
+        : { left: 0.24, top: 0.08, right: 0.76, bottom: 0.96 };
+      const backgroundMaskBox = sampleBoxToMaskBox(
+        targetDoorwayBox,
+        backgroundSize,
+        backgroundStyle && backgroundStyle.sampleBox
+          ? 'background-doorway-vision-sample-box'
+          : 'background-doorway-fallback-center-box'
+      );
+      if (backgroundMaskBox) {
+        const maskBuffer = buildHandleMaskBuffer(backgroundSize.width, backgroundSize.height, backgroundMaskBox);
+        maskFile = await createMaskFile(maskBuffer);
+        maskBox = backgroundMaskBox;
+        detectionMode = backgroundStyle && backgroundStyle.sampleBox
+          ? 'background-reference-mask'
+          : 'background-reference-mask-fallback';
+      }
+    }
+    if (backgroundBuffer) {
+      inputImages.push(await createInputImage(
+        backgroundReference.originalImageFileID,
+        backgroundBuffer,
+        'background-reference.png'
+      ));
+    }
+    inputImages.push(await createInputImage(primaryImage.originalImageFileID, primaryBuffer, `${primaryImage.slotId || 'full-door'}.png`));
+    for (const referenceImage of referenceImages) {
+      if (
+        !referenceImage ||
+        !referenceImage.originalImageFileID ||
+        referenceImage.slotId === 'full-door' ||
+        referenceImage.slotId === 'background-reference'
+      ) {
+        continue;
+      }
+      inputImages.push(await createInputImage(
+        referenceImage.originalImageFileID,
+        referenceBuffers[referenceImage.slotId || referenceImage.originalImageFileID],
+        `${referenceImage.slotId || 'reference'}.png`
+      ));
+    }
+  } else {
+    inputImages = [await createInputImage(primaryImage.originalImageFileID, primaryBuffer, `${primaryImage.slotId || 'full-door'}.png`)];
+    for (const referenceImage of referenceImages) {
+      if (!referenceImage || !referenceImage.originalImageFileID || referenceImage.slotId === 'full-door') {
+        continue;
+      }
+      inputImages.push(await createInputImage(
+        referenceImage.originalImageFileID,
+        referenceBuffers[referenceImage.slotId || referenceImage.originalImageFileID],
+        `${referenceImage.slotId || 'reference'}.png`
+      ));
+    }
+  }
 
   console.log('[worker] downloaded edit artifacts', job._id || job.jobId, {
     inputImageCount: inputImages.length,
@@ -1878,6 +1975,11 @@ async function buildEditArtifacts(job) {
     hasColorSample: referenceImages.some((item) => item && item.slotId === 'color-sample'),
     hasBackgroundReference: referenceImages.some((item) => item && item.slotId === 'background-reference'),
     referenceSlots: referenceImages.map((item) => item && item.slotId).filter(Boolean),
+    inputImageOrder: backgroundReference
+      ? ['background-reference', 'full-door'].concat(referenceImages
+        .map((item) => item && item.slotId)
+        .filter((slotId) => slotId && slotId !== 'background-reference' && slotId !== 'full-door'))
+      : referenceImages.map((item) => item && item.slotId).filter(Boolean),
     referenceOptions: referenceImages.map((item) => ({
       slotId: item && item.slotId,
       colorMode: item && item.colorMode,
@@ -2034,6 +2136,11 @@ async function processJob(jobId) {
     hasColorSample: getReferenceImages(job).some((item) => item && item.slotId === 'color-sample'),
     hasBackgroundReference: getReferenceImages(job).some((item) => item && item.slotId === 'background-reference'),
     referenceSlots: getReferenceImages(job).map((item) => item && item.slotId).filter(Boolean),
+    inputImageOrder: getReferenceImages(job).some((item) => item && item.slotId === 'background-reference')
+      ? ['background-reference', 'full-door'].concat(getReferenceImages(job)
+        .map((item) => item && item.slotId)
+        .filter((slotId) => slotId && slotId !== 'background-reference' && slotId !== 'full-door'))
+      : getReferenceImages(job).map((item) => item && item.slotId).filter(Boolean),
     referenceImageCount: getReferenceImages(job).length,
     referenceOptions: getReferenceImages(job).map((item) => ({
       slotId: item && item.slotId,
