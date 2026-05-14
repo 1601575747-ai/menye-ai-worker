@@ -557,6 +557,100 @@ function rgbToHex(r, g, b) {
   return `#${[r, g, b].map((value) => clamp(Math.round(value), 0, 255).toString(16).padStart(2, '0')).join('')}`.toUpperCase();
 }
 
+function solveLinearSystem(matrix, values) {
+  const n = values.length;
+  const a = matrix.map((row, index) => row.concat(values[index]));
+  for (let col = 0; col < n; col += 1) {
+    let pivot = col;
+    for (let row = col + 1; row < n; row += 1) {
+      if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) {
+        pivot = row;
+      }
+    }
+    if (Math.abs(a[pivot][col]) < 1e-10) {
+      return null;
+    }
+    if (pivot !== col) {
+      const temp = a[col];
+      a[col] = a[pivot];
+      a[pivot] = temp;
+    }
+    const divisor = a[col][col];
+    for (let k = col; k <= n; k += 1) {
+      a[col][k] /= divisor;
+    }
+    for (let row = 0; row < n; row += 1) {
+      if (row === col) {
+        continue;
+      }
+      const factor = a[row][col];
+      for (let k = col; k <= n; k += 1) {
+        a[row][k] -= factor * a[col][k];
+      }
+    }
+  }
+  return a.map((row) => row[n]);
+}
+
+function getHomographyFromUnitSquareToQuad(quad) {
+  const source = [
+    { u: 0, v: 0 },
+    { u: 1, v: 0 },
+    { u: 1, v: 1 },
+    { u: 0, v: 1 }
+  ];
+  const target = [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft];
+  const matrix = [];
+  const values = [];
+  for (let index = 0; index < 4; index += 1) {
+    const { u, v } = source[index];
+    const { x, y } = target[index];
+    matrix.push([u, v, 1, 0, 0, 0, -u * x, -v * x]);
+    values.push(x);
+    matrix.push([0, 0, 0, u, v, 1, -u * y, -v * y]);
+    values.push(y);
+  }
+  const solved = solveLinearSystem(matrix, values);
+  if (!solved) {
+    return null;
+  }
+  return [
+    solved[0], solved[1], solved[2],
+    solved[3], solved[4], solved[5],
+    solved[6], solved[7], 1
+  ];
+}
+
+function invert3x3(matrix) {
+  const [a, b, c, d, e, f, g, h, i] = matrix;
+  const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  if (Math.abs(det) < 1e-10) {
+    return null;
+  }
+  return [
+    (e * i - f * h) / det,
+    (c * h - b * i) / det,
+    (b * f - c * e) / det,
+    (f * g - d * i) / det,
+    (a * i - c * g) / det,
+    (c * d - a * f) / det,
+    (d * h - e * g) / det,
+    (b * g - a * h) / det,
+    (a * e - b * d) / det
+  ];
+}
+
+function applyHomography(matrix, x, y) {
+  const denominator = (matrix[6] * x) + (matrix[7] * y) + matrix[8];
+  if (Math.abs(denominator) < 1e-10) {
+    return null;
+  }
+  return {
+    x: ((matrix[0] * x) + (matrix[1] * y) + matrix[2]) / denominator,
+    y: ((matrix[3] * x) + (matrix[4] * y) + matrix[5]) / denominator
+  };
+}
+
 function describeSampledColor(rgb) {
   if (!rgb) {
     return '';
@@ -710,6 +804,86 @@ async function readColorFromSampleBox(referenceBuffer, size, sampleBox, slotId, 
   };
 }
 
+function getQuadBounds(quad, size) {
+  const points = [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft];
+  return {
+    left: clamp(Math.floor(Math.min(...points.map((point) => point.x))), 0, Math.max(size.width - 1, 0)),
+    top: clamp(Math.floor(Math.min(...points.map((point) => point.y))), 0, Math.max(size.height - 1, 0)),
+    right: clamp(Math.ceil(Math.max(...points.map((point) => point.x))), 1, size.width),
+    bottom: clamp(Math.ceil(Math.max(...points.map((point) => point.y))), 1, size.height)
+  };
+}
+
+async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placement) {
+  if (!sharp || !primaryBuffer || !backgroundBuffer || !placement || !placement.sourceDoorBox || !placement.targetDoorQuad) {
+    return null;
+  }
+  const sourceBox = placement.sourceDoorBox;
+  const targetQuad = placement.targetDoorQuad;
+  const backgroundMetadata = await sharp(backgroundBuffer).rotate().metadata();
+  const backgroundSize = {
+    width: backgroundMetadata.width || 0,
+    height: backgroundMetadata.height || 0
+  };
+  if (!backgroundSize.width || !backgroundSize.height) {
+    return null;
+  }
+  const source = await sharp(primaryBuffer)
+    .rotate()
+    .extract({
+      left: sourceBox.left,
+      top: sourceBox.top,
+      width: sourceBox.width,
+      height: sourceBox.height
+    })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const sourceWidth = source.info.width;
+  const sourceHeight = source.info.height;
+  const sourceChannels = source.info.channels;
+  const bounds = getQuadBounds(targetQuad, backgroundSize);
+  const overlay = Buffer.alloc(backgroundSize.width * backgroundSize.height * 4);
+  const homography = getHomographyFromUnitSquareToQuad(targetQuad);
+  const inverse = homography ? invert3x3(homography) : null;
+  if (!inverse) {
+    return null;
+  }
+  for (let y = bounds.top; y < bounds.bottom; y += 1) {
+    for (let x = bounds.left; x < bounds.right; x += 1) {
+      const uv = applyHomography(inverse, x + 0.5, y + 0.5);
+      if (!uv || uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) {
+        continue;
+      }
+      const sourceX = clamp(Math.round(uv.x * (sourceWidth - 1)), 0, sourceWidth - 1);
+      const sourceY = clamp(Math.round(uv.y * (sourceHeight - 1)), 0, sourceHeight - 1);
+      const sourceIndex = ((sourceY * sourceWidth) + sourceX) * sourceChannels;
+      const edgeDistance = Math.min(uv.x, 1 - uv.x, uv.y, 1 - uv.y);
+      const alpha = clamp(Math.round((edgeDistance / 0.018) * 255), 0, 255);
+      const targetIndex = ((y * backgroundSize.width) + x) * 4;
+      overlay[targetIndex] = source.data[sourceIndex];
+      overlay[targetIndex + 1] = source.data[sourceIndex + 1];
+      overlay[targetIndex + 2] = source.data[sourceIndex + 2];
+      overlay[targetIndex + 3] = Math.min(alpha, source.data[sourceIndex + 3] == null ? 255 : source.data[sourceIndex + 3]);
+    }
+  }
+  return sharp(backgroundBuffer)
+    .rotate()
+    .resize(backgroundSize.width, backgroundSize.height, { fit: 'fill' })
+    .composite([{
+      input: overlay,
+      raw: {
+        width: backgroundSize.width,
+        height: backgroundSize.height,
+        channels: 4
+      },
+      left: 0,
+      top: 0
+    }])
+    .png()
+    .toBuffer();
+}
+
 async function sampleVisibleMedianColor(referenceImage, referenceBuffer, style) {
   if (!sharp || !referenceBuffer) {
     return null;
@@ -795,52 +969,6 @@ function buildHandleMaskBuffer(width, height, box) {
   return Buffer.concat(chunks);
 }
 
-function buildAlphaMaskBuffer(width, height, box, insideAlpha, outsideAlpha) {
-  const rowLength = 1 + (width * 4);
-  const raw = Buffer.alloc(rowLength * height);
-  const innerAlpha = insideAlpha == null ? 255 : insideAlpha;
-  const outerAlpha = outsideAlpha == null ? 0 : outsideAlpha;
-  for (let y = 0; y < height; y += 1) {
-    const rowStart = y * rowLength;
-    raw[rowStart] = 0;
-    for (let x = 0; x < width; x += 1) {
-      const pixelStart = rowStart + 1 + (x * 4);
-      const inside = x >= box.left && x < box.right && y >= box.top && y < box.bottom;
-      raw[pixelStart] = 255;
-      raw[pixelStart + 1] = 255;
-      raw[pixelStart + 2] = 255;
-      raw[pixelStart + 3] = inside ? innerAlpha : outerAlpha;
-    }
-  }
-
-  const chunks = [];
-  const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  chunks.push(pngHeader);
-
-  function createChunk(type, data) {
-    const length = Buffer.alloc(4);
-    length.writeUInt32BE(data.length, 0);
-    const typeBuffer = Buffer.from(type, 'ascii');
-    const crcInput = Buffer.concat([typeBuffer, data]);
-    const crc = Buffer.alloc(4);
-    crc.writeUInt32BE((crc32(crcInput) >>> 0), 0);
-    return Buffer.concat([length, typeBuffer, data, crc]);
-  }
-
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-  chunks.push(createChunk('IHDR', ihdr));
-  chunks.push(createChunk('IDAT', zlib.deflateSync(raw)));
-  chunks.push(createChunk('IEND', Buffer.alloc(0)));
-  return Buffer.concat(chunks);
-}
-
 const crcTable = (() => {
   const table = new Uint32Array(256);
   for (let n = 0; n < 256; n += 1) {
@@ -883,6 +1011,61 @@ function normalizeMaskBox(rawBox, size, source) {
   };
 }
 
+function normalizePoint(rawPoint, size) {
+  if (!rawPoint || !size || !size.width || !size.height) {
+    return null;
+  }
+  const x = Number(rawPoint.x);
+  const y = Number(rawPoint.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  return {
+    x: clamp(Math.round(x), 0, Math.max(size.width - 1, 0)),
+    y: clamp(Math.round(y), 0, Math.max(size.height - 1, 0))
+  };
+}
+
+function normalizeCornerQuad(rawQuad, size, source) {
+  if (!rawQuad || !size || !size.width || !size.height) {
+    return null;
+  }
+  const topLeft = normalizePoint(rawQuad.topLeft || rawQuad.tl, size);
+  const topRight = normalizePoint(rawQuad.topRight || rawQuad.tr, size);
+  const bottomRight = normalizePoint(rawQuad.bottomRight || rawQuad.br, size);
+  const bottomLeft = normalizePoint(rawQuad.bottomLeft || rawQuad.bl, size);
+  if (!topLeft || !topRight || !bottomRight || !bottomLeft) {
+    return null;
+  }
+  const xs = [topLeft.x, topRight.x, bottomRight.x, bottomLeft.x];
+  const ys = [topLeft.y, topRight.y, bottomRight.y, bottomLeft.y];
+  const width = Math.max(...xs) - Math.min(...xs);
+  const height = Math.max(...ys) - Math.min(...ys);
+  if (width < size.width * 0.08 || height < size.height * 0.15) {
+    return null;
+  }
+  return {
+    topLeft,
+    topRight,
+    bottomRight,
+    bottomLeft,
+    source: source || rawQuad.source || 'unknown'
+  };
+}
+
+function boxToQuad(box) {
+  if (!box) {
+    return null;
+  }
+  return {
+    topLeft: { x: box.left, y: box.top },
+    topRight: { x: box.right, y: box.top },
+    bottomRight: { x: box.right, y: box.bottom },
+    bottomLeft: { x: box.left, y: box.bottom },
+    source: box.source || 'box'
+  };
+}
+
 function inferHandleMaskBox(size, handleBuffer, job) {
   if (!size || !size.width || !size.height) {
     return null;
@@ -901,51 +1084,19 @@ function inferHandleMaskBox(size, handleBuffer, job) {
   }, size, isDoubleDoor ? 'door-type-center-heuristic' : 'door-type-side-heuristic');
 }
 
-function sampleBoxToMaskBox(sampleBox, size, source, options) {
+function sampleBoxToMaskBox(sampleBox, size, source) {
   const normalized = normalizeSampleBox(sampleBox);
   if (!normalized || !size || !size.width || !size.height) {
     return null;
   }
-  const expandRatio = options && Number.isFinite(Number(options.expandRatio))
-    ? Number(options.expandRatio)
-    : 0.035;
-  const minExpand = options && Number.isFinite(Number(options.minExpand))
-    ? Number(options.minExpand)
-    : 0.015;
-  const expandX = Math.max(minExpand, (normalized.right - normalized.left) * expandRatio);
-  const expandY = Math.max(minExpand, (normalized.bottom - normalized.top) * expandRatio);
+  const expandX = Math.max(0.015, (normalized.right - normalized.left) * 0.035);
+  const expandY = Math.max(0.015, (normalized.bottom - normalized.top) * 0.035);
   return normalizeMaskBox({
     left: Math.floor((normalized.left - expandX) * size.width),
     top: Math.floor((normalized.top - expandY) * size.height),
     right: Math.ceil((normalized.right + expandX) * size.width),
     bottom: Math.ceil((normalized.bottom + expandY) * size.height)
   }, size, source || 'sample-box');
-}
-
-function insetMaskBox(maskBox, size, insetXRatio, insetYRatio, source) {
-  if (!maskBox || !size || !size.width || !size.height) {
-    return null;
-  }
-  const width = maskBox.right - maskBox.left;
-  const height = maskBox.bottom - maskBox.top;
-  return normalizeMaskBox({
-    left: maskBox.left + Math.round(width * insetXRatio),
-    top: maskBox.top + Math.round(height * insetYRatio),
-    right: maskBox.right - Math.round(width * insetXRatio),
-    bottom: maskBox.bottom - Math.round(height * insetYRatio)
-  }, size, source || maskBox.source || 'inset-mask');
-}
-
-function scaleMaskBox(maskBox, fromSize, toSize, source) {
-  if (!maskBox || !fromSize || !toSize || !fromSize.width || !fromSize.height || !toSize.width || !toSize.height) {
-    return null;
-  }
-  return normalizeMaskBox({
-    left: Math.round((maskBox.left / fromSize.width) * toSize.width),
-    top: Math.round((maskBox.top / fromSize.height) * toSize.height),
-    right: Math.round((maskBox.right / fromSize.width) * toSize.width),
-    bottom: Math.round((maskBox.bottom / fromSize.height) * toSize.height)
-  }, toSize, source || maskBox.source || 'scaled-mask');
 }
 
 function toDataUrl(buffer, fileID) {
@@ -1050,6 +1201,56 @@ async function detectHandleMaskBox(primaryBuffer, primaryFileID, handleBuffer, h
   const text = response.output_text || '';
   const parsed = extractJsonObject(text);
   return normalizeMaskBox(parsed, size, 'vision-detected');
+}
+
+async function detectDoorPlacement(primaryBuffer, primaryFileID, backgroundBuffer, backgroundFileID, primarySize, backgroundSize, job) {
+  if (!primaryBuffer || !backgroundBuffer || !primarySize || !backgroundSize) {
+    return null;
+  }
+  const response = await openai.responses.create(getVisionResponseRequest([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: [
+              '你只做坐标定位，不生成图片。',
+              '第一张图是要抠出的主门整门照，第二张图是最终背景图。',
+              `第一张图尺寸 width=${primarySize.width}, height=${primarySize.height}。第二张图尺寸 width=${backgroundSize.width}, height=${backgroundSize.height}。`,
+              `门类型：${job && job.doorType ? job.doorType : '未指定'}`,
+              '请定位第一张图中“需要贴到背景里的完整门体区域”，应包含门扇、门套/包边、把手、锁体、玻璃等完整门成品，尽量贴紧外轮廓，不要包含大面积墙面、地面或无关背景。',
+              '请定位第二张图中“目标旧门/门洞/预留门位”的四个角。若背景里已有旧门，以旧门或门洞整体外轮廓四角为准；若只有门框或预留空位，以可安装新门的矩形/四边形门位为准。',
+              '只返回 JSON，不要解释，不要 markdown。',
+              'JSON 格式必须为：{"sourceDoorBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"targetDoorQuad":{"topLeft":{"x":整数,"y":整数},"topRight":{"x":整数,"y":整数},"bottomRight":{"x":整数,"y":整数},"bottomLeft":{"x":整数,"y":整数}},"confidence":"high|medium|low","notes":"..."}。',
+              '坐标必须使用各自图片的原始像素坐标。targetDoorQuad 必须只框目标门位，不要框整面墙、家具、地面或无关装饰。'
+            ].join('\n')
+          },
+          {
+            type: 'input_image',
+            image_url: toDataUrl(primaryBuffer, primaryFileID)
+          },
+          {
+            type: 'input_image',
+            image_url: toDataUrl(backgroundBuffer, backgroundFileID)
+          }
+        ]
+      }
+    ]));
+  const parsed = extractJsonObject(response.output_text || '');
+  if (!parsed) {
+    return null;
+  }
+  const sourceDoorBox = normalizeMaskBox(parsed.sourceDoorBox, primarySize, 'vision-source-door-box');
+  const targetDoorQuad = normalizeCornerQuad(parsed.targetDoorQuad, backgroundSize, 'vision-target-door-quad');
+  if (!sourceDoorBox || !targetDoorQuad) {
+    return null;
+  }
+  return {
+    sourceDoorBox,
+    targetDoorQuad,
+    confidence: parsed.confidence || '',
+    notes: parsed.notes || ''
+  };
 }
 
 async function detectReferenceStyle(referenceImage, referenceBuffer, job) {
@@ -1911,7 +2112,8 @@ async function buildEditArtifacts(job) {
   let maskFile = null;
   let detectionMode = 'none';
   let handleStyle = null;
-  let backgroundProtection = null;
+  let directCompositeBuffer = null;
+  let directCompositePlacement = null;
   const referenceStyles = [];
   const detectableReferenceSlotIds = getDetectableReferenceSlotIds();
   const hasMultiPartReference = referenceImages.some((item) => item && detectableReferenceSlotIds.includes(item.slotId));
@@ -1999,42 +2201,56 @@ async function buildEditArtifacts(job) {
         backgroundSize,
         backgroundStyle && backgroundStyle.sampleBox
           ? 'background-doorway-vision-sample-box'
-          : 'background-doorway-fallback-center-box',
-        backgroundStyle && backgroundStyle.sampleBox
-          ? { expandRatio: 0.012, minExpand: 0.004 }
-          : { expandRatio: 0, minExpand: 0 }
+          : 'background-doorway-fallback-center-box'
       );
       if (backgroundMaskBox) {
-        const backgroundCompositeBox = backgroundStyle && backgroundStyle.sampleBox
-          ? (insetMaskBox(
-            backgroundMaskBox,
-            backgroundSize,
-            0.025,
-            0.008,
-            'background-doorway-tight-composite-box'
-          ) || backgroundMaskBox)
-          : (insetMaskBox(
-            backgroundMaskBox,
-            backgroundSize,
-            0.07,
-            0.02,
-            'background-doorway-fallback-tight-composite-box'
-          ) || backgroundMaskBox);
         const maskBuffer = buildHandleMaskBuffer(backgroundSize.width, backgroundSize.height, backgroundMaskBox);
         maskFile = await createMaskFile(maskBuffer);
         maskBox = backgroundMaskBox;
         detectionMode = backgroundStyle && backgroundStyle.sampleBox
           ? 'background-reference-mask'
           : 'background-reference-mask-fallback';
-        backgroundProtection = {
-          enabled: true,
-          backgroundBuffer,
-          backgroundFileID: backgroundReference.originalImageFileID,
-          maskBox: backgroundMaskBox,
-          compositeBox: backgroundCompositeBox,
-          sourceSize: backgroundSize,
-          mode: detectionMode
-        };
+      }
+      if (sharp) {
+        try {
+          directCompositePlacement = await detectDoorPlacement(
+            primaryBuffer,
+            primaryImage.originalImageFileID,
+            backgroundBuffer,
+            backgroundReference.originalImageFileID,
+            primarySize,
+            backgroundSize,
+            job
+          );
+        } catch (error) {
+          console.warn('[worker] vision door placement detection failed', {
+            jobId: job._id || job.jobId,
+            message: error && error.message ? error.message : error
+          });
+        }
+        if (!directCompositePlacement && maskBox) {
+          directCompositePlacement = {
+            sourceDoorBox: normalizeMaskBox({
+              left: primarySize.width * 0.03,
+              top: primarySize.height * 0.02,
+              right: primarySize.width * 0.97,
+              bottom: primarySize.height * 0.98
+            }, primarySize, 'fallback-primary-door-box'),
+            targetDoorQuad: boxToQuad(maskBox),
+            confidence: 'fallback',
+            notes: 'fallback from background mask box'
+          };
+        }
+        if (directCompositePlacement) {
+          directCompositeBuffer = await composeDoorIntoBackground(
+            primaryBuffer,
+            backgroundBuffer,
+            directCompositePlacement
+          );
+          if (directCompositeBuffer) {
+            detectionMode = 'direct-vision-placement-composite';
+          }
+        }
       }
     }
     if (backgroundBuffer) {
@@ -2094,13 +2310,10 @@ async function buildEditArtifacts(job) {
     primarySize,
     detectionMode,
     maskBox,
-    backgroundProtection: backgroundProtection ? {
+    directComposite: directCompositeBuffer ? {
       enabled: true,
-      backgroundFileID: backgroundProtection.backgroundFileID,
-      sourceSize: backgroundProtection.sourceSize,
-      maskBox: backgroundProtection.maskBox,
-      compositeBox: backgroundProtection.compositeBox,
-      mode: backgroundProtection.mode
+      bytes: directCompositeBuffer.length,
+      placement: directCompositePlacement
     } : null,
     handleStyle,
     referenceStyles
@@ -2113,7 +2326,8 @@ async function buildEditArtifacts(job) {
     detectionMode,
     handleStyle,
     referenceStyles,
-    backgroundProtection
+    directCompositeBuffer,
+    directCompositePlacement
   };
 }
 
@@ -2129,52 +2343,6 @@ async function readImageResponseBody(response) {
     return downloadRemoteBuffer(first.url);
   }
   throw new Error('暂时无法识别返回图片');
-}
-
-async function protectBackgroundOutsideMask(resultBuffer, protection) {
-  if (!sharp || !resultBuffer || !protection || !protection.backgroundBuffer || !protection.maskBox || !protection.sourceSize) {
-    return resultBuffer;
-  }
-  const resultMetadata = await sharp(resultBuffer).metadata();
-  const outputSize = {
-    width: resultMetadata.width || 1024,
-    height: resultMetadata.height || 1024
-  };
-  const sourceCompositeBox = protection.compositeBox || protection.maskBox;
-  const outputMaskBox = scaleMaskBox(
-    sourceCompositeBox,
-    protection.sourceSize,
-    outputSize,
-    'background-output-protection-mask'
-  );
-  if (!outputMaskBox) {
-    return resultBuffer;
-  }
-  const baseBackground = await sharp(protection.backgroundBuffer)
-    .rotate()
-    .resize(outputSize.width, outputSize.height, { fit: 'fill' })
-    .png()
-    .toBuffer();
-  const alphaMask = await sharp(buildAlphaMaskBuffer(
-    outputSize.width,
-    outputSize.height,
-    outputMaskBox,
-    255,
-    0
-  ))
-    .blur(0.35)
-    .png()
-    .toBuffer();
-  const maskedGeneratedDoorway = await sharp(resultBuffer)
-    .resize(outputSize.width, outputSize.height, { fit: 'fill' })
-    .ensureAlpha()
-    .composite([{ input: alphaMask, blend: 'dest-in' }])
-    .png()
-    .toBuffer();
-  return sharp(baseBackground)
-    .composite([{ input: maskedGeneratedDoorway, left: 0, top: 0 }])
-    .png()
-    .toBuffer();
 }
 
 function shouldRetryImageApi(error) {
@@ -2282,7 +2450,8 @@ async function processJob(jobId) {
     imageCount: editArtifacts.inputImages.length,
     hasMask: !!editArtifacts.maskFile,
     maskBox: editArtifacts.maskBox,
-    detectionMode: editArtifacts.detectionMode
+    detectionMode: editArtifacts.detectionMode,
+    hasDirectComposite: !!editArtifacts.directCompositeBuffer
   });
   const prompt = buildDoorImageInstruction(
     job,
@@ -2315,25 +2484,20 @@ async function processJob(jobId) {
     handleStyle: editArtifacts.handleStyle,
     referenceStyles: editArtifacts.referenceStyles
   });
-  const response = await requestEditedImage(jobId, editArtifacts.inputImages, prompt, {
-    mask: editArtifacts.maskFile
-  });
-  console.log('[worker] received openai response', jobId);
-
-  let resultBuffer = await readImageResponseBody(response);
-  console.log('[worker] parsed result buffer', jobId, resultBuffer.length);
-  if (editArtifacts.backgroundProtection) {
-    const protectedBuffer = await protectBackgroundOutsideMask(resultBuffer, editArtifacts.backgroundProtection);
-    if (protectedBuffer !== resultBuffer) {
-      resultBuffer = protectedBuffer;
-      console.log('[worker] protected background outside mask', {
-        jobId,
-        bytes: resultBuffer.length,
-        mode: editArtifacts.backgroundProtection.mode,
-        maskBox: editArtifacts.backgroundProtection.maskBox,
-        compositeBox: editArtifacts.backgroundProtection.compositeBox
-      });
-    }
+  let resultBuffer = editArtifacts.directCompositeBuffer || null;
+  if (resultBuffer) {
+    console.log('[worker] using direct vision placement composite', {
+      jobId,
+      bytes: resultBuffer.length,
+      placement: editArtifacts.directCompositePlacement
+    });
+  } else {
+    const response = await requestEditedImage(jobId, editArtifacts.inputImages, prompt, {
+      mask: editArtifacts.maskFile
+    });
+    console.log('[worker] received openai response', jobId);
+    resultBuffer = await readImageResponseBody(response);
+    console.log('[worker] parsed result buffer', jobId, resultBuffer.length);
   }
   const resultImageFileID = await uploadResult(jobId, job.version || 1, resultBuffer);
   console.log('[worker] uploaded result image', jobId, resultImageFileID);
