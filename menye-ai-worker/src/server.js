@@ -899,6 +899,23 @@ function sampleRawBilinear(data, width, height, channels, x, y) {
   return result;
 }
 
+function mixColor(source, target, ratio) {
+  return [
+    source[0] * (1 - ratio) + target[0] * ratio,
+    source[1] * (1 - ratio) + target[1] * ratio,
+    source[2] * (1 - ratio) + target[2] * ratio,
+    source[3]
+  ];
+}
+
+function colorDistance(a, b) {
+  return Math.sqrt(
+    ((a[0] - b[0]) ** 2) +
+    ((a[1] - b[1]) ** 2) +
+    ((a[2] - b[2]) ** 2)
+  );
+}
+
 async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placement) {
   if (!sharp || !primaryBuffer || !backgroundBuffer || !placement || !placement.sourceDoorBox || !placement.targetDoorQuad) {
     return null;
@@ -913,6 +930,12 @@ async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placem
   if (!backgroundSize.width || !backgroundSize.height) {
     return null;
   }
+  const backgroundRaw = await sharp(backgroundBuffer)
+    .rotate()
+    .resize(backgroundSize.width, backgroundSize.height, { fit: 'fill' })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
   const source = await sharp(primaryBuffer)
     .rotate()
     .extract({
@@ -943,7 +966,26 @@ async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placem
       }
       const sourceX = clamp(uv.x * (sourceWidth - 1), 0, sourceWidth - 1);
       const sourceY = clamp(uv.y * (sourceHeight - 1), 0, sourceHeight - 1);
-      const sampled = sampleRawBilinear(source.data, sourceWidth, sourceHeight, sourceChannels, sourceX, sourceY);
+      let sampled = sampleRawBilinear(source.data, sourceWidth, sourceHeight, sourceChannels, sourceX, sourceY);
+      const floorUv = applyHomography(homography, uv.x, 1.018);
+      if (floorUv) {
+        const floorX = clamp(floorUv.x, 0, backgroundSize.width - 1);
+        const floorY = clamp(floorUv.y + Math.max(3, backgroundSize.height * 0.006), 0, backgroundSize.height - 1);
+        const floorSample = sampleRawBilinear(
+          backgroundRaw.data,
+          backgroundSize.width,
+          backgroundSize.height,
+          backgroundRaw.info.channels,
+          floorX,
+          floorY
+        );
+        const bottomWeight = smoothstep(0.955, 1, uv.y);
+        const distanceWeight = smoothstep(28, 120, colorDistance(sampled, floorSample));
+        const blendRatio = clamp(bottomWeight * distanceWeight * 0.42, 0, 0.42);
+        if (blendRatio > 0.01) {
+          sampled = mixColor(sampled, floorSample, blendRatio);
+        }
+      }
       const edgeDistance = Math.min(uv.x, 1 - uv.x, uv.y, 1 - uv.y);
       const edgeAlpha = smoothstep(0, 0.004, edgeDistance);
       const alpha = Math.round(edgeAlpha * 255);
@@ -993,6 +1035,100 @@ async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placem
         top: 0
       }
     ])
+    .png()
+    .toBuffer();
+}
+
+function getBottomSeamRepairRegion(quad, size) {
+  if (!quad || !size || !size.width || !size.height) {
+    return null;
+  }
+  const bottomCenter = {
+    x: (quad.bottomLeft.x + quad.bottomRight.x) / 2,
+    y: (quad.bottomLeft.y + quad.bottomRight.y) / 2
+  };
+  const bounds = getQuadBounds(quad, size);
+  const doorWidth = bounds.right - bounds.left;
+  const cropSize = clamp(Math.round(doorWidth * 1.12), 260, Math.min(size.width, size.height, 720));
+  let left = Math.round(bottomCenter.x - (cropSize / 2));
+  let top = Math.round(bottomCenter.y - (cropSize * 0.68));
+  left = clamp(left, 0, Math.max(size.width - cropSize, 0));
+  top = clamp(top, 0, Math.max(size.height - cropSize, 0));
+  const seamY = clamp(Math.round(bottomCenter.y - top), 0, cropSize - 1);
+  const bandHeight = clamp(Math.round(cropSize * 0.12), 24, 56);
+  const bandTop = clamp(seamY - Math.round(bandHeight * 0.55), 0, cropSize - 1);
+  const bandBottom = clamp(seamY + Math.round(bandHeight * 0.65), bandTop + 1, cropSize);
+  return {
+    cropBox: {
+      left,
+      top,
+      width: cropSize,
+      height: cropSize
+    },
+    maskBox: {
+      left: Math.round(cropSize * 0.08),
+      top: bandTop,
+      right: Math.round(cropSize * 0.92),
+      bottom: bandBottom
+    }
+  };
+}
+
+async function repairBottomSeamWithAI(imageBuffer, placement) {
+  if (!sharp || !imageBuffer || !placement || !placement.targetDoorQuad) {
+    return imageBuffer;
+  }
+  const metadata = await sharp(imageBuffer).metadata();
+  const size = {
+    width: metadata.width || 0,
+    height: metadata.height || 0
+  };
+  if (!size.width || !size.height) {
+    return imageBuffer;
+  }
+  const region = getBottomSeamRepairRegion(placement.targetDoorQuad, size);
+  if (!region) {
+    return imageBuffer;
+  }
+  const cropBuffer = await sharp(imageBuffer)
+    .extract(region.cropBox)
+    .png()
+    .toBuffer();
+  const maskBuffer = buildHandleMaskBuffer(region.cropBox.width, region.cropBox.height, region.maskBox);
+  const cropFile = await toFile(cropBuffer, 'bottom-seam-crop.png', {
+    type: 'image/png'
+  });
+  const maskFile = await toFile(maskBuffer, 'bottom-seam-mask.png', {
+    type: 'image/png'
+  });
+  const prompt = [
+    '只修复透明 mask 区域内的门底接缝，不要修改 mask 外任何内容。',
+    '目标：让门底与地板自然衔接，去除突兀的白边、亮边、源图背景残留或硬切线。',
+    '可以在门底和地板交界处生成很窄的接触阴影、轻微地板颜色过渡、局部压暗或柔化边缘。',
+    '不要重画门板、门套、把手、墙面、护墙板、家具或地板整体纹理。',
+    '不要改变门的款式、比例、颜色、材质、线条、底部结构或门槛；如果白色/浅色部分属于门体结构，只做边缘融合，不要删除。',
+    '输出必须保持原裁剪图构图，只让接缝更自然。'
+  ].join('\n');
+  const response = await openai.images.edit({
+    model: OPENAI_IMAGE_MODEL,
+    image: [cropFile],
+    mask: maskFile,
+    prompt,
+    size: '1024x1024'
+  }, {
+    timeout: OPENAI_IMAGE_TIMEOUT_MS
+  });
+  const repairedBuffer = await readImageResponseBody(response);
+  const repairedCrop = await sharp(repairedBuffer)
+    .resize(region.cropBox.width, region.cropBox.height, { fit: 'fill' })
+    .png()
+    .toBuffer();
+  return sharp(imageBuffer)
+    .composite([{
+      input: repairedCrop,
+      left: region.cropBox.left,
+      top: region.cropBox.top
+    }])
     .png()
     .toBuffer();
 }
@@ -2604,6 +2740,21 @@ async function processJob(jobId) {
       bytes: resultBuffer.length,
       placement: editArtifacts.directCompositePlacement
     });
+    try {
+      const repairedBuffer = await repairBottomSeamWithAI(resultBuffer, editArtifacts.directCompositePlacement);
+      if (repairedBuffer !== resultBuffer) {
+        resultBuffer = repairedBuffer;
+        console.log('[worker] repaired bottom seam with localized image edit', {
+          jobId,
+          bytes: resultBuffer.length
+        });
+      }
+    } catch (error) {
+      console.warn('[worker] localized bottom seam repair failed', {
+        jobId,
+        message: error && error.message ? error.message : error
+      });
+    }
   } else {
     const response = await requestEditedImage(jobId, editArtifacts.inputImages, prompt, {
       mask: editArtifacts.maskFile
