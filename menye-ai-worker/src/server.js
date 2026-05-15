@@ -916,6 +916,14 @@ function colorDistance(a, b) {
   );
 }
 
+function getLuma(color) {
+  return (0.2126 * color[0]) + (0.7152 * color[1]) + (0.0722 * color[2]);
+}
+
+function getSaturationRange(color) {
+  return Math.max(color[0], color[1], color[2]) - Math.min(color[0], color[1], color[2]);
+}
+
 async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placement) {
   if (!sharp || !primaryBuffer || !backgroundBuffer || !placement || !placement.sourceDoorBox || !placement.targetDoorQuad) {
     return null;
@@ -967,6 +975,7 @@ async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placem
       const sourceX = clamp(uv.x * (sourceWidth - 1), 0, sourceWidth - 1);
       const sourceY = clamp(uv.y * (sourceHeight - 1), 0, sourceHeight - 1);
       let sampled = sampleRawBilinear(source.data, sourceWidth, sourceHeight, sourceChannels, sourceX, sourceY);
+      let alphaScale = 1;
       const floorUv = applyHomography(homography, uv.x, 1.018);
       if (floorUv) {
         const floorX = clamp(floorUv.x, 0, backgroundSize.width - 1);
@@ -985,10 +994,20 @@ async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placem
         if (blendRatio > 0.01) {
           sampled = mixColor(sampled, floorSample, blendRatio);
         }
+        const bottomCornerWeight = Math.max(
+          uv.x < 0.18 ? smoothstep(0.18, 0.02, uv.x) : 0,
+          uv.x > 0.82 ? smoothstep(0.82, 0.98, uv.x) : 0
+        ) * smoothstep(0.948, 1, uv.y);
+        const looksLikeSourceBackground = getLuma(sampled) > 168 && getSaturationRange(sampled) < 42;
+        if (bottomCornerWeight > 0.01 && looksLikeSourceBackground) {
+          const cleanupStrength = clamp(bottomCornerWeight * smoothstep(35, 150, colorDistance(sampled, floorSample)), 0, 0.92);
+          sampled = mixColor(sampled, floorSample, cleanupStrength * 0.88);
+          alphaScale = 1 - (cleanupStrength * 0.82);
+        }
       }
       const edgeDistance = Math.min(uv.x, 1 - uv.x, uv.y, 1 - uv.y);
       const edgeAlpha = smoothstep(0, 0.004, edgeDistance);
-      const alpha = Math.round(edgeAlpha * 255);
+      const alpha = Math.round(edgeAlpha * alphaScale * 255);
       const targetIndex = ((y * backgroundSize.width) + x) * 4;
       overlay[targetIndex] = clamp(Math.round(sampled[0]), 0, 255);
       overlay[targetIndex + 1] = clamp(Math.round(sampled[1]), 0, 255);
