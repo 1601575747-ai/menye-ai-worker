@@ -1055,9 +1055,10 @@ function getBottomSeamRepairRegion(quad, size) {
   left = clamp(left, 0, Math.max(size.width - cropSize, 0));
   top = clamp(top, 0, Math.max(size.height - cropSize, 0));
   const seamY = clamp(Math.round(bottomCenter.y - top), 0, cropSize - 1);
-  const bandHeight = clamp(Math.round(cropSize * 0.12), 24, 56);
-  const bandTop = clamp(seamY - Math.round(bandHeight * 0.55), 0, cropSize - 1);
-  const bandBottom = clamp(seamY + Math.round(bandHeight * 0.65), bandTop + 1, cropSize);
+  const upperOverlap = clamp(Math.round(cropSize * 0.012), 4, 9);
+  const lowerOverlap = clamp(Math.round(cropSize * 0.045), 16, 30);
+  const bandTop = clamp(seamY - upperOverlap, 0, cropSize - 1);
+  const bandBottom = clamp(seamY + lowerOverlap, bandTop + 1, cropSize);
   return {
     cropBox: {
       left,
@@ -1066,9 +1067,9 @@ function getBottomSeamRepairRegion(quad, size) {
       height: cropSize
     },
     maskBox: {
-      left: Math.round(cropSize * 0.08),
+      left: Math.round(cropSize * 0.24),
       top: bandTop,
-      right: Math.round(cropSize * 0.92),
+      right: Math.round(cropSize * 0.76),
       bottom: bandBottom
     }
   };
@@ -1104,7 +1105,8 @@ async function repairBottomSeamWithAI(imageBuffer, placement) {
   const prompt = [
     '只修复透明 mask 区域内的门底接缝，不要修改 mask 外任何内容。',
     '目标：让门底与地板自然衔接，去除突兀的白边、亮边、源图背景残留或硬切线。',
-    '可以在门底和地板交界处生成很窄的接触阴影、轻微地板颜色过渡、局部压暗或柔化边缘。',
+    '只允许在门底最下沿和地板交界的极窄区域生成接触阴影、轻微地板颜色过渡、局部压暗或柔化边缘。',
+    '不要处理门体底板的大面积区域，不要把门底木纹/纹理抹平，不要生成雾状、脏污、涂抹或模糊斑块。',
     '不要重画门板、门套、把手、墙面、护墙板、家具或地板整体纹理。',
     '不要改变门的款式、比例、颜色、材质、线条、底部结构或门槛；如果白色/浅色部分属于门体结构，只做边缘融合，不要删除。',
     '输出必须保持原裁剪图构图，只让接缝更自然。'
@@ -1123,9 +1125,30 @@ async function repairBottomSeamWithAI(imageBuffer, placement) {
     .resize(region.cropBox.width, region.cropBox.height, { fit: 'fill' })
     .png()
     .toBuffer();
+  const compositeMask = await sharp(buildCompositeMaskBuffer(
+    region.cropBox.width,
+    region.cropBox.height,
+    region.maskBox
+  ))
+    .blur(0.8)
+    .png()
+    .toBuffer();
+  const repairedMasked = await sharp(repairedCrop)
+    .ensureAlpha()
+    .composite([{ input: compositeMask, blend: 'dest-in' }])
+    .png()
+    .toBuffer();
+  const mergedCrop = await sharp(cropBuffer)
+    .composite([{
+      input: repairedMasked,
+      left: 0,
+      top: 0
+    }])
+    .png()
+    .toBuffer();
   return sharp(imageBuffer)
     .composite([{
-      input: repairedCrop,
+      input: mergedCrop,
       left: region.cropBox.left,
       top: region.cropBox.top
     }])
@@ -1187,6 +1210,50 @@ function buildHandleMaskBuffer(width, height, box) {
       raw[pixelStart + 1] = 255;
       raw[pixelStart + 2] = 255;
       raw[pixelStart + 3] = inside ? 0 : 255;
+    }
+  }
+
+  const chunks = [];
+  const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  chunks.push(pngHeader);
+
+  function createChunk(type, data) {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length, 0);
+    const typeBuffer = Buffer.from(type, 'ascii');
+    const crcInput = Buffer.concat([typeBuffer, data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE((crc32(crcInput) >>> 0), 0);
+    return Buffer.concat([length, typeBuffer, data, crc]);
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+  chunks.push(createChunk('IHDR', ihdr));
+  chunks.push(createChunk('IDAT', zlib.deflateSync(raw)));
+  chunks.push(createChunk('IEND', Buffer.alloc(0)));
+  return Buffer.concat(chunks);
+}
+
+function buildCompositeMaskBuffer(width, height, box) {
+  const rowLength = 1 + (width * 4);
+  const raw = Buffer.alloc(rowLength * height);
+  for (let y = 0; y < height; y += 1) {
+    const rowStart = y * rowLength;
+    raw[rowStart] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const pixelStart = rowStart + 1 + (x * 4);
+      const inside = x >= box.left && x < box.right && y >= box.top && y < box.bottom;
+      raw[pixelStart] = 255;
+      raw[pixelStart + 1] = 255;
+      raw[pixelStart + 2] = 255;
+      raw[pixelStart + 3] = inside ? 255 : 0;
     }
   }
 
