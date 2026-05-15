@@ -916,14 +916,6 @@ function colorDistance(a, b) {
   );
 }
 
-function getLuma(color) {
-  return (0.2126 * color[0]) + (0.7152 * color[1]) + (0.0722 * color[2]);
-}
-
-function getSaturationRange(color) {
-  return Math.max(color[0], color[1], color[2]) - Math.min(color[0], color[1], color[2]);
-}
-
 async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placement) {
   if (!sharp || !primaryBuffer || !backgroundBuffer || !placement || !placement.sourceDoorBox || !placement.targetDoorQuad) {
     return null;
@@ -976,6 +968,7 @@ async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placem
       const sourceY = clamp(uv.y * (sourceHeight - 1), 0, sourceHeight - 1);
       let sampled = sampleRawBilinear(source.data, sourceWidth, sourceHeight, sourceChannels, sourceX, sourceY);
       let alphaScale = 1;
+      let floorSampleForCleanup = null;
       const floorUv = applyHomography(homography, uv.x, 1.018);
       if (floorUv) {
         const floorX = clamp(floorUv.x, 0, backgroundSize.width - 1);
@@ -988,22 +981,23 @@ async function composeDoorIntoBackground(primaryBuffer, backgroundBuffer, placem
           floorX,
           floorY
         );
+        floorSampleForCleanup = floorSample;
         const bottomWeight = smoothstep(0.955, 1, uv.y);
         const distanceWeight = smoothstep(28, 120, colorDistance(sampled, floorSample));
         const blendRatio = clamp(bottomWeight * distanceWeight * 0.42, 0, 0.42);
         if (blendRatio > 0.01) {
           sampled = mixColor(sampled, floorSample, blendRatio);
         }
-        const bottomCornerWeight = Math.max(
-          uv.x < 0.18 ? smoothstep(0.18, 0.02, uv.x) : 0,
-          uv.x > 0.82 ? smoothstep(0.82, 0.98, uv.x) : 0
-        ) * smoothstep(0.948, 1, uv.y);
-        const looksLikeSourceBackground = getLuma(sampled) > 168 && getSaturationRange(sampled) < 42;
-        if (bottomCornerWeight > 0.01 && looksLikeSourceBackground) {
-          const cleanupStrength = clamp(bottomCornerWeight * smoothstep(35, 150, colorDistance(sampled, floorSample)), 0, 0.92);
-          sampled = mixColor(sampled, floorSample, cleanupStrength * 0.88);
-          alphaScale = 1 - (cleanupStrength * 0.82);
+      }
+      const bottomCornerWeight = Math.max(
+        uv.x < 0.09 ? 1 - smoothstep(0.018, 0.09, uv.x) : 0,
+        uv.x > 0.91 ? smoothstep(0.91, 0.982, uv.x) : 0
+      ) * smoothstep(0.955, 0.998, uv.y);
+      if (bottomCornerWeight > 0.01) {
+        if (floorSampleForCleanup) {
+          sampled = mixColor(sampled, floorSampleForCleanup, bottomCornerWeight * 0.65);
         }
+        alphaScale = 1 - (bottomCornerWeight * 0.96);
       }
       const edgeDistance = Math.min(uv.x, 1 - uv.x, uv.y, 1 - uv.y);
       const edgeAlpha = smoothstep(0, 0.004, edgeDistance);
