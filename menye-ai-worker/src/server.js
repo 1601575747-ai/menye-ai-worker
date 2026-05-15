@@ -1087,7 +1087,57 @@ function getBottomSeamRepairRegion(quad, size) {
   };
 }
 
-async function repairBottomSeamWithAI(imageBuffer, placement) {
+function normalizeLocalBox(rawBox, size) {
+  if (!rawBox || !size || !size.width || !size.height) {
+    return null;
+  }
+  const left = clamp(Math.round(Number(rawBox.left)), 0, Math.max(size.width - 1, 0));
+  const top = clamp(Math.round(Number(rawBox.top)), 0, Math.max(size.height - 1, 0));
+  const right = clamp(Math.round(Number(rawBox.right)), left + 1, size.width);
+  const bottom = clamp(Math.round(Number(rawBox.bottom)), top + 1, size.height);
+  if (right - left < 3 || bottom - top < 3) {
+    return null;
+  }
+  return { left, top, right, bottom };
+}
+
+async function detectBottomNonDoorResidues(cropBuffer, cropSize) {
+  const response = await openai.responses.create(getVisionResponseRequest([
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'input_text',
+          text: [
+            '你只做图片缺陷定位，不修图。',
+            `这是一张门底部局部裁剪图，坐标基于该裁剪图 width=${cropSize.width}, height=${cropSize.height}。`,
+            '请只找出门底附近明显“不属于门体/门套/门槛结构”的源图背景残留块，例如白底、灰白块、旧背景角、错误地板块、矩形贴图残留。',
+            '不要把真实门套脚、门框线、门槛、门底板、门体阴影或地板本身标为缺陷。',
+            '只返回 JSON，不要解释，不要 markdown。',
+            'JSON 格式：{"regions":[{"box":{"left":整数,"top":整数,"right":整数,"bottom":整数},"confidence":"high|medium|low","reason":"..."}]}。',
+            '如果没有明确残留，返回 {"regions":[] }。'
+          ].join('\n')
+        },
+        {
+          type: 'input_image',
+          image_url: `data:image/png;base64,${cropBuffer.toString('base64')}`
+        }
+      ]
+    }
+  ]));
+  const parsed = extractJsonObject(response.output_text || '');
+  const regions = Array.isArray(parsed && parsed.regions) ? parsed.regions : [];
+  return regions
+    .filter((region) => /high|medium/i.test(String(region.confidence || '')))
+    .map((region) => ({
+      box: normalizeLocalBox(region.box, cropSize),
+      confidence: region.confidence || '',
+      reason: region.reason || ''
+    }))
+    .filter((region) => region.box);
+}
+
+async function blendBottomResiduesWithFloor(imageBuffer, placement) {
   if (!sharp || !imageBuffer || !placement || !placement.targetDoorQuad) {
     return imageBuffer;
   }
@@ -1107,51 +1157,57 @@ async function repairBottomSeamWithAI(imageBuffer, placement) {
     .extract(region.cropBox)
     .png()
     .toBuffer();
-  const maskBuffer = buildHandleMaskBuffer(region.cropBox.width, region.cropBox.height, region.maskBox);
-  const cropFile = await toFile(cropBuffer, 'bottom-seam-crop.png', {
-    type: 'image/png'
+  const detected = await detectBottomNonDoorResidues(cropBuffer, {
+    width: region.cropBox.width,
+    height: region.cropBox.height
   });
-  const maskFile = await toFile(maskBuffer, 'bottom-seam-mask.png', {
-    type: 'image/png'
-  });
-  const prompt = [
-    '只修复透明 mask 区域内的门底接缝，不要修改 mask 外任何内容。',
-    '目标：让门底与地板自然衔接，去除突兀的白边、亮边、源图背景残留或硬切线。',
-    '可以在门底和地板交界处生成很窄的接触阴影、轻微地板颜色过渡、局部压暗或柔化边缘。',
-    '不要重画门板、门套、把手、墙面、护墙板、家具或地板整体纹理。',
-    '不要改变门的款式、比例、颜色、材质、线条、底部结构或门槛；如果白色/浅色部分属于门体结构，只做边缘融合，不要删除。',
-    '输出必须保持原裁剪图构图，只让接缝更自然。'
-  ].join('\n');
-  const response = await openai.images.edit({
-    model: OPENAI_IMAGE_MODEL,
-    image: [cropFile],
-    mask: maskFile,
-    prompt,
-    size: '1024x1024'
-  }, {
-    timeout: OPENAI_IMAGE_TIMEOUT_MS
-  });
-  const repairedBuffer = await readImageResponseBody(response);
-  const repairedCrop = await sharp(repairedBuffer)
-    .resize(region.cropBox.width, region.cropBox.height, { fit: 'fill' })
-    .png()
-    .toBuffer();
-  const compositeMask = await sharp(buildCompositeMaskBuffer(
-    region.cropBox.width,
-    region.cropBox.height,
-    region.maskBox
-  ))
-    .blur(1.6)
-    .png()
-    .toBuffer();
-  const repairedMasked = await sharp(repairedCrop)
+  if (!detected.length) {
+    return imageBuffer;
+  }
+  const cropRaw = await sharp(cropBuffer)
     .ensureAlpha()
-    .composite([{ input: compositeMask, blend: 'dest-in' }])
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const data = Buffer.from(cropRaw.data);
+  for (const detectedRegion of detected) {
+    const box = detectedRegion.box;
+    const sampleY = clamp(box.bottom + Math.max(3, Math.round(region.cropBox.height * 0.01)), 0, region.cropBox.height - 1);
+    for (let y = box.top; y < box.bottom; y += 1) {
+      for (let x = box.left; x < box.right; x += 1) {
+        const index = ((y * region.cropBox.width) + x) * 4;
+        const sample = sampleRawBilinear(
+          cropRaw.data,
+          region.cropBox.width,
+          region.cropBox.height,
+          4,
+          x,
+          sampleY
+        );
+        const centerX = (box.left + box.right) / 2;
+        const centerY = (box.top + box.bottom) / 2;
+        const dx = Math.abs(x - centerX) / Math.max((box.right - box.left) / 2, 1);
+        const dy = Math.abs(y - centerY) / Math.max((box.bottom - box.top) / 2, 1);
+        const feather = clamp(1 - Math.max(dx, dy), 0, 1);
+        const ratio = 0.35 + (smoothstep(0, 1, feather) * 0.55);
+        data[index] = clamp(Math.round((data[index] * (1 - ratio)) + (sample[0] * ratio)), 0, 255);
+        data[index + 1] = clamp(Math.round((data[index + 1] * (1 - ratio)) + (sample[1] * ratio)), 0, 255);
+        data[index + 2] = clamp(Math.round((data[index + 2] * (1 - ratio)) + (sample[2] * ratio)), 0, 255);
+        data[index + 3] = clamp(Math.round(data[index + 3] * (1 - (ratio * 0.72))), 0, 255);
+      }
+    }
+  }
+  const repairedCrop = await sharp(data, {
+    raw: {
+      width: region.cropBox.width,
+      height: region.cropBox.height,
+      channels: 4
+    }
+  })
     .png()
     .toBuffer();
   return sharp(imageBuffer)
     .composite([{
-      input: repairedMasked,
+      input: repairedCrop,
       left: region.cropBox.left,
       top: region.cropBox.top
     }])
@@ -2811,16 +2867,16 @@ async function processJob(jobId) {
       placement: editArtifacts.directCompositePlacement
     });
     try {
-      const repairedBuffer = await repairBottomSeamWithAI(resultBuffer, editArtifacts.directCompositePlacement);
+      const repairedBuffer = await blendBottomResiduesWithFloor(resultBuffer, editArtifacts.directCompositePlacement);
       if (repairedBuffer !== resultBuffer) {
         resultBuffer = repairedBuffer;
-        console.log('[worker] repaired bottom seam with localized image edit', {
+        console.log('[worker] blended AI-detected bottom residues with floor', {
           jobId,
           bytes: resultBuffer.length
         });
       }
     } catch (error) {
-      console.warn('[worker] localized bottom seam repair failed', {
+      console.warn('[worker] AI-detected bottom residue blend failed', {
         jobId,
         message: error && error.message ? error.message : error
       });
