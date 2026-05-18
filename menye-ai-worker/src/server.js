@@ -1858,6 +1858,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const hasHeaderColumnDetail = referenceImages.some((item) => item.slotId === 'header-column-detail');
   const hasTextureReference = referenceImages.some((item) => item.slotId === 'texture-reference');
   const hasBackgroundReference = referenceImages.some((item) => item.slotId === 'background-reference');
+  const userWantsIndependentHeaderColumnColor = /(?:门头|门楣|门柱|立柱|罗马柱|外框)[^。；，,.]{0,28}(?:单独|独立|不要同门|不跟门|不同色|另外|另做|按参考图颜色|用参考图颜色|保持原色|颜色保持不变|颜色不变)|(?:单独|独立|不要同门|不跟门|不同色|另外|另做)[^。；，,.]{0,28}(?:门头|门楣|门柱|立柱|罗马柱|外框)/.test(requirementText);
+  const colorSampleAppliesToHeaderColumn = hasColorSample && hasHeaderColumnDetail && !userWantsIndependentHeaderColumnColor;
   const orderedReferenceImages = hasBackgroundReference
     ? [
         ...referenceImages.filter((item) => item && item.slotId === 'background-reference'),
@@ -1966,7 +1968,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         ? (edgeTrimPreserveMeansReferenceColor
           ? `门体颜色：必须按颜色参考图调整门扇/门体可见表面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}；包边因客户明确要求颜色保持不变，必须保持包边参考图中包边自身的可见颜色，不参与门体统一颜色`
           : `门体颜色：必须按颜色参考图调整门扇/门体可见表面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}；包边因客户明确要求独立颜色，按客户包边颜色或包边参考图颜色执行`)
-        : `整门颜色：默认必须按颜色参考图统一调整整门可见门面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}，包含包边/门套同色；如补充要求指定局部不同颜色，则按指定部件优先`)
+        : `整门颜色：默认必须按颜色参考图统一调整整门可见门面颜色${colorSampleUsesReferenceTexture ? '和纹理/材质观感' : ''}，包含包边/门套${colorSampleAppliesToHeaderColumn ? '、门头/门柱/外框装饰' : ''}同色；如补充要求指定局部不同颜色，则按指定部件优先`)
       : ''
   ].filter(Boolean);
   const requiredReferenceTaskInstruction = requiredReferenceTasks.length
