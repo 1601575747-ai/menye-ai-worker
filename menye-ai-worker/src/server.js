@@ -2142,6 +2142,14 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '如果无法精确匹配颜色，应优先保持门型结构不变，再尽量接近颜色参考图的可见取样色。'
       ].filter(Boolean).join('\n')
     : '';
+  const headerColumnColorUnificationInstruction = colorSampleAppliesToHeaderColumn
+    ? [
+        '最高优先级门头/门柱同色规则：本次同时上传了颜色参考图和门头/门柱参考图，且客户没有明确要求门头/门柱单独颜色，因此门头、门楣、横梁、罗马柱、侧柱、立柱、外框装饰必须跟颜色参考图/门体颜色统一。',
+        '门头/门柱参考图只决定结构、层次、轮廓、线条和装饰细节；它自身的深灰、黑色、木色或拍摄环境色不能保留为最终颜色。',
+        '颜色层必须最后校正门头/门柱颜色：如果门扇已经变成目标色，但门头、门楣、门柱、立柱或外框仍是深灰/黑色/原参考图色，就属于失败结果。',
+        '允许门头/门柱因为阴影和凹凸产生合理明暗层次，但整体色相、冷暖、明度和饱和度必须归入同一目标色系，不能看起来像另一套深色门头柱。'
+      ].join('\n')
+    : '';
   const singleDoorAdditionalPartInstruction = [
     hasLockDetail
       ? [
@@ -2436,6 +2444,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     edgeTrimStrictInstruction,
     auxiliaryReferenceInstruction,
     colorSampleStrictInstruction,
+    headerColumnColorUnificationInstruction,
     singleDoorAdditionalPartInstruction,
     additionalPartConflictResolutionInstruction,
     textColorInstruction,
