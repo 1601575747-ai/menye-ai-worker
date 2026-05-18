@@ -422,12 +422,12 @@ function getReferenceStylePrompt(slotId, options = {}) {
       return [
         '请识别这张锁体/智能锁细节参考图中的锁具外观特征，只返回 JSON。',
         '这张图默认只用于锁体、锁孔、智能锁、猫眼、门铃、锁面板、锁芯和相关五金细节，不是整门款式参考，也不是普通把手款式参考。',
-        'JSON 格式必须为：{"part":"锁体/智能锁","sourceType":"近景或整门参考","lockIntegrationType":"handle-integrated|standalone|none|uncertain","referenceContainsHandle":true,"hasSmartLockPanel":true,"hasRoundHole":true,"roundHoleDescription":"...","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        'JSON 格式必须为：{"part":"锁体/智能锁","sourceType":"近景或整门参考","lockIntegrationType":"handle-integrated|standalone|none|uncertain","referenceContainsHandle":true,"handleCount":2,"isDoubleHandle":true,"handleLengthRatio":"...","smartPanelPlacement":"...","hasSmartLockPanel":true,"hasRoundHole":true,"roundHoleDescription":"...","roundHoleRelativePosition":"...","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
         'lockIntegrationType 判断标准：只有当智能锁面板、指纹/密码/刷卡区域、锁芯/小圆孔与拉手本体物理集成在同一根把手或同一块不可拆面板里，才写 handle-integrated；如果只是参考图里同时拍到了普通把手和旁边/附近的锁具，写 standalone；不确定写 uncertain。',
-        '必须识别锁体类型、是否把手一体式、面板形状、颜色、材质、表面质感、边角、屏幕/按键/指纹区/钥匙孔/猫眼位置、锁孔开口、小圆孔、装饰线和安装方向。',
+        '必须识别锁体类型、是否把手一体式、把手数量、是否双把手、每根把手的大致长度比例、面板位于哪根把手的哪个高度、颜色、材质、表面质感、边角、屏幕/按键/指纹区/钥匙孔/猫眼位置、锁孔开口、小圆孔相对位置、装饰线和安装方向。',
         '如果参考图包含整扇门，只能提取锁具和其必要安装区域，不能迁移门扇主体、门板线条、包边、颜色或整门款式。',
         '如果 lockIntegrationType 不是 handle-integrated，applyDescription 必须写明：只迁移智能锁面板、指纹/密码/刷卡区、小圆孔、锁芯和必要安装区域；参考图里的把手仅作定位参考，不迁移把手款式。',
-        '如果 lockIntegrationType 是 handle-integrated，applyDescription 必须写明：把智能锁面板、小圆孔和一体式把手作为不可拆整体融合，但仍不得改变门型结构、门板线条、包边和背景。',
+        '如果 lockIntegrationType 是 handle-integrated，applyDescription 必须写明：把智能锁面板、小圆孔和一体式把手作为不可拆整体融合；如果参考图是双把手，最终必须生成双把手，不能变成单把手；把手长度、宽窄、面板高度、小圆孔相对位置必须接近参考图，但仍不得改变门型结构、门板线条、包边和背景。',
         '不要解释，不要输出 markdown。'
       ].join('\n');
     case 'panel-style-detail':
@@ -1718,9 +1718,14 @@ async function detectReferenceStyle(referenceImage, referenceBuffer, job) {
     sampleBox: normalizeSampleBox(parsed.sampleBox),
     lockIntegrationType: parsed.lockIntegrationType || '',
     referenceContainsHandle: !!parsed.referenceContainsHandle,
+    handleCount: Number(parsed.handleCount || 0) || 0,
+    isDoubleHandle: !!parsed.isDoubleHandle,
+    handleLengthRatio: parsed.handleLengthRatio || '',
+    smartPanelPlacement: parsed.smartPanelPlacement || '',
     hasSmartLockPanel: !!parsed.hasSmartLockPanel,
     hasRoundHole: !!parsed.hasRoundHole,
     roundHoleDescription: parsed.roundHoleDescription || '',
+    roundHoleRelativePosition: parsed.roundHoleRelativePosition || '',
     applyDescription: parsed.applyDescription || ''
   };
 }
@@ -1731,6 +1736,8 @@ function isHandleIntegratedLockStyle(style) {
   }
   const text = [
     style.lockIntegrationType,
+    style.handleCount ? `handleCount=${style.handleCount}` : '',
+    style.isDoubleHandle ? '双把手' : '',
     style.shape,
     style.structure,
     style.profile,
@@ -1757,7 +1764,7 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
     style.slotId === 'edge-trim-detail' && !useEdgeTrimReferenceColor
       ? `系统识别到${style.label || style.part || '包边参考图'}结构特征：来源类型=${style.sourceType || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；颜色字段默认忽略，不作为最终包边颜色；执行描述=只提取包边结构、宽窄、层次、线条、纹理走向和收边方式，${edgeTrimColorFallback}`
       : style.slotId === 'lock-detail'
-        ? `系统识别到${style.label || style.part || '锁体/智能锁参考图'}特征：来源类型=${style.sourceType || '未识别'}；锁具颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；锁具与把手关系=${style.lockIntegrationType || '未识别'}；参考图是否拍到把手=${style.referenceContainsHandle ? '是' : '否'}；是否有智能锁面板=${style.hasSmartLockPanel ? '是' : '否'}；是否有小圆孔=${style.hasRoundHole ? '是' : '否'}；小圆孔描述=${style.roundHoleDescription || '未识别'}；截面/层次=${style.profile || '未识别'}；边角=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只应用到锁体/智能锁/锁孔/猫眼等五金区域；除非识别为把手一体式智能锁，否则不作为把手款式参考'}。`
+        ? `系统识别到${style.label || style.part || '锁体/智能锁参考图'}特征：来源类型=${style.sourceType || '未识别'}；锁具颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；锁具与把手关系=${style.lockIntegrationType || '未识别'}；参考图是否拍到把手=${style.referenceContainsHandle ? '是' : '否'}；把手数量=${style.handleCount || '未识别'}；是否双把手=${style.isDoubleHandle ? '是' : '否'}；把手长度比例=${style.handleLengthRatio || '未识别'}；智能面板位置=${style.smartPanelPlacement || '未识别'}；是否有智能锁面板=${style.hasSmartLockPanel ? '是' : '否'}；是否有小圆孔=${style.hasRoundHole ? '是' : '否'}；小圆孔描述=${style.roundHoleDescription || '未识别'}；小圆孔相对位置=${style.roundHoleRelativePosition || '未识别'}；截面/层次=${style.profile || '未识别'}；边角=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只应用到锁体/智能锁/锁孔/猫眼等五金区域；除非识别为把手一体式智能锁，否则不作为把手款式参考'}。`
       : style.slotId === 'panel-style-detail'
         ? `系统识别到${style.label || style.part || '门板线条/造型参考图'}特征：来源类型=${style.sourceType || '未识别'}；线条/造型=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/凹凸层次=${style.profile || '未识别'}；边角/压线=${style.edge || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；关键细节=${style.details || '未识别'}；参考图可见颜色=${style.color || '未识别'}；颜色字段仅作为参考图信息，不作为门体改色来源；执行描述=${style.applyDescription || '只迁移门扇表面的线条、压线、凹凸和门芯造型，不迁移整门比例、包边、把手、锁体、玻璃、颜色或背景'}。`
       : style.slotId === 'glass-grille-detail'
@@ -1905,6 +1912,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const colorSampleStyle = Array.isArray(referenceStyles)
     ? referenceStyles.find((style) => style && style.slotId === 'color-sample')
     : null;
+  const lockReferenceIsDoubleHandle = !!(lockStyle && (lockStyle.isDoubleHandle || lockStyle.handleCount >= 2));
   const backgroundStyle = Array.isArray(referenceStyles)
     ? referenceStyles.find((style) => style && style.slotId === 'background-reference')
     : null;
@@ -1922,7 +1930,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     hasHandleDetail ? '门把手：必须按门把手细节图融合/替换' : '',
     hasEdgeTrimDetail ? '包边：必须识别包边参考图中的包边结构并产生可见融合/替换效果，不能保留原包边不变' : '',
     hasLockDetail ? (lockReferenceIsHandleIntegrated
-      ? '锁体/智能锁：必须按锁体/智能锁细节图替换为一体式把手锁整体，包含智能锁面板、指纹/密码/刷卡区、小圆孔和与其物理一体的把手；不能保留整门图里的原智能锁或原把手不变'
+      ? `锁体/智能锁：必须按锁体/智能锁细节图替换为一体式把手锁整体，包含智能锁面板、指纹/密码/刷卡区、小圆孔和与其物理一体的把手；${lockReferenceIsDoubleHandle ? '参考图是双把手，最终必须生成双把手，不能只生成单把手；' : ''}不能保留整门图里的原智能锁或原把手不变`
       : '锁体/智能锁：必须按锁体/智能锁细节图处理锁具、锁孔、智能锁面板、猫眼、小圆孔或相关五金区域；参考图里的把手默认不迁移') : '',
     hasPanelStyleDetail ? '门板线条/造型：必须按门板线条/造型细节图处理门扇表面的线条、压线、门芯凹凸或造型结构' : '',
     hasGlassGrilleDetail ? '气窗：必须按气窗细节图处理玻璃、镂空、格栅、透光窗或对应装饰区域' : '',
@@ -2105,14 +2113,14 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? [
           '锁体/智能锁边界：锁体/智能锁参考图只约束锁具、锁孔、智能锁面板、猫眼、门铃和其必要安装衔接区域。',
           lockReferenceIsHandleIntegrated
-            ? '系统识别到该智能锁与把手为物理一体式结构，因此本次锁体任务必须把智能锁面板、小圆孔和一体式把手作为同一个不可拆整体替换到整门图上；把手长度、宽窄、颜色和面板位置应随一体式锁具一起保持一致，不能保留整门图里的原智能锁/原把手。'
+            ? `系统识别到该智能锁与把手为物理一体式结构，因此本次锁体任务必须把智能锁面板、小圆孔和一体式把手作为同一个不可拆整体替换到整门图上；把手数量、长度、宽窄、颜色和面板位置应随一体式锁具一起保持一致，不能保留整门图里的原智能锁/原把手。${lockReferenceIsDoubleHandle ? '参考图为双把手结构，必须在最终图中保留两根对应把手及其相对位置；不能减少成单把手。' : ''}`
             : '系统未识别为把手一体式智能锁，因此即使锁体参考图里拍到了把手，也只能把把手当作定位参考，不能迁移把手款式；整门图里有把手就保留原把手，整门图里没有把手就不要新增把手。',
           lockStyle && lockStyle.hasRoundHole
-            ? `智能锁参考图包含小圆孔，最终图必须保留真实小圆孔/锁孔细节；${lockStyle.roundHoleDescription || '小圆孔应位于智能锁或门缝附近的合理位置'}，不要画成装饰图案。`
+            ? `智能锁参考图包含小圆孔，最终图必须保留真实小圆孔/锁孔细节；${lockStyle.roundHoleDescription || '小圆孔应位于智能锁或门缝附近的合理位置'}；相对位置=${lockStyle.roundHoleRelativePosition || '按参考图相对智能面板、把手和门缝的位置'}。小圆孔位置是关键结构点，必须贴近参考图相对位置，不要画成装饰图案，不要挪到门板中央或错误门扇。`
             : '如果智能锁结构需要小圆孔、锁芯孔或指示孔，应按参考图真实位置和尺寸保守添加；不要凭空放大或放到门板中央。',
           '如果参考图中包含整门，只能提取锁具外观，不能迁移参考图里的门板线条、包边、颜色、背景或整门款式。',
           lockReferenceIsHandleIntegrated
-            ? '一体式智能锁修改仍不得改变门扇外轮廓、门板线条数量、门型比例、包边结构和背景；但一体式把手锁所在区域必须产生清晰可见的替换结果。'
+            ? '一体式智能锁修改仍不得改变门扇外轮廓、门板线条数量、门型比例、包边结构和背景；但一体式把手锁所在区域必须产生清晰可见的替换结果，把手长度不得明显缩短或变成与参考图不同的比例。'
             : '非一体式锁体/智能锁修改不得改变门扇外轮廓、门板线条数量、门型比例、包边结构、背景和原把手位置。'
         ].join('\n')
       : '',
@@ -2236,7 +2244,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       ? '必须保留第一张整门图里的门扇外轮廓、宽高比例、开门方向、把手位置、锁体位置和门框相对比例；门板分割、线条位置、凹凸/浮雕/压线结构、玻璃位置和门芯造型只有在对应上传参考图明确要求时，才允许在对应目标区域内局部调整。'
       : '必须保留第一张整门图里的门扇外轮廓、宽高比例、开门方向、门板分割数量、线条位置、凹凸/浮雕/压线结构、玻璃位置、门芯造型、把手位置和门框相对比例。',
     lockReferenceIsHandleIntegrated
-      ? '把手一体式智能锁例外：只允许在一体式智能锁把手自身区域内替换把手和锁面板的整体位置、长度、宽窄、颜色、黑色面板、小圆孔和安装衔接；门型、包边、门板线条和背景仍冻结。'
+      ? `把手一体式智能锁例外：只允许在一体式智能锁把手自身区域内替换把手和锁面板的整体位置、数量、长度、宽窄、颜色、黑色面板、小圆孔和安装衔接；${lockReferenceIsDoubleHandle ? '参考图是双把手时，最终必须保留双把手数量、左右/双扇相对位置和长短比例，不能生成单把手。' : ''}门型、包边、门板线条和背景仍冻结。`
       : '',
     edgeTrimColorProtectedFromColorSample
       ? '包边参考图只约束包边/门套线/收口条/压线区域的结构、宽窄、层次、线条和收边方式；颜色参考图约束门扇/门体可见表面颜色、纹理色差和材质观感，但本次包边颜色按客户独立颜色意图执行；门把手细节图只约束门把手区域；锁体/智能锁参考图只约束锁具五金区域；门板造型参考图只约束门扇表面线条/凹凸/门芯造型；气窗参考图只约束气窗/透光窗/气窗/镂空区域；材质纹理参考图只约束门体表面纹理和质感；背景参考图和背景文字只约束背景、墙面、地面、空间和光线或抠图。'
