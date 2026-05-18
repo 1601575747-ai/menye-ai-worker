@@ -24,6 +24,7 @@ const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 180000);
 const OPENAI_IMAGE_TIMEOUT_MS = Number(process.env.OPENAI_IMAGE_TIMEOUT_MS || OPENAI_TIMEOUT_MS);
 const CLOUDBASE_TIMEOUT_MS = Number(process.env.CLOUDBASE_TIMEOUT_MS || 60000);
 const CLOUDBASE_UPLOAD_TIMEOUT_MS = Number(process.env.CLOUDBASE_UPLOAD_TIMEOUT_MS || 90000);
+const ENABLE_DIRECT_BACKGROUND_COMPOSITE = process.env.ENABLE_DIRECT_BACKGROUND_COMPOSITE === 'true';
 const WORKER_SHARED_SECRET = process.env.WORKER_SHARED_SECRET;
 const PORT = Number(process.env.PORT || 3000);
 
@@ -73,6 +74,34 @@ function getSanitizedBaseUrl(value) {
 function normalizeVisionModelName(value) {
   const normalized = String(value || '').trim().replace(/\s+Thinking$/i, '').trim();
   return normalized || 'gpt-5.5';
+}
+
+function normalizeTaskType(job) {
+  const taskType = String(job && job.taskType ? job.taskType : '').trim();
+  if (taskType) {
+    return taskType;
+  }
+  const sceneId = String(job && job.sceneId ? job.sceneId : '').trim();
+  if (sceneId === 'home-effect') {
+    return 'parts-compose';
+  }
+  if (sceneId === 'dimension-annotation') {
+    return 'dimension-annotation';
+  }
+  if (sceneId === 'scene-effect' || sceneId === 'marketing-poster') {
+    return 'scene-effect';
+  }
+  const templateTypeText = String(job && job.templateType ? job.templateType : '');
+  if (/尺寸标注|尺寸|标注/.test(templateTypeText)) {
+    return 'dimension-annotation';
+  }
+  if (/门部件拼接效果图|门部件拼接/.test(templateTypeText)) {
+    return 'parts-compose';
+  }
+  if (/场景效果图|场景|背景/.test(templateTypeText)) {
+    return 'scene-effect';
+  }
+  return '';
 }
 
 function getVisionResponseRequest(input) {
@@ -1719,9 +1748,9 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
 function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const requirementText = job && job.requirement ? String(job.requirement) : '';
   const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
-  const templateTypeText = job && job.templateType ? String(job.templateType) : '';
-  const isDimensionAnnotationTask = /尺寸标注|尺寸|标注/.test(templateTypeText);
-  const isPartsComposeTask = /门部件拼接效果图|门部件拼接/.test(templateTypeText);
+  const taskType = normalizeTaskType(job);
+  const isDimensionAnnotationTask = taskType === 'dimension-annotation';
+  const isPartsComposeTask = taskType === 'parts-compose';
   const referenceImages = getReferenceImages(job);
   const userSelectedEdgeTrimReferenceColor = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail' && item.colorMode === 'reference');
   const allowHandleColorChange = /把手.*颜色|颜色.*把手|门把手.*颜色|颜色.*门把手|调成门的颜色|改成门的颜色|同门颜色|跟门同色|与门同色/.test(requirementText);
@@ -2283,6 +2312,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
       : '输出必须是一张基于第一张整门图编辑后的完整整门效果图，不能返回单独的门把手参考图、局部裁切图、拼贴参考图、仅展示局部的图片，也不能返回一张重新设计的新门。',
     '禁止从零生成新门款；禁止把其他参考图中的整门样式迁移到第一张整门图上；禁止把第一张整门图替换成看起来相似但线条、比例、门芯或把手位置不同的新门。',
     `用途：${job.templateType || '门业展示'}`,
+    `任务类型：${taskType || '未指定'}`,
     `门类型：${job.doorType || '未指定'}`,
     `目标部件：${targetPartText}`,
     dimensionAnnotationInstruction,
@@ -2586,7 +2616,7 @@ async function buildEditArtifacts(job) {
           ? 'background-reference-mask'
           : 'background-reference-mask-fallback';
       }
-      if (sharp) {
+      if (sharp && ENABLE_DIRECT_BACKGROUND_COMPOSITE) {
         try {
           directCompositePlacement = await detectDoorPlacement(
             primaryBuffer,
@@ -2626,6 +2656,11 @@ async function buildEditArtifacts(job) {
             detectionMode = 'direct-vision-placement-composite';
           }
         }
+      } else if (sharp) {
+        console.log('[worker] direct background composite disabled; using image api scene generation', {
+          jobId: job._id || job.jobId,
+          enableEnv: 'ENABLE_DIRECT_BACKGROUND_COMPOSITE=true'
+        });
       }
     }
     if (backgroundBuffer) {
@@ -2852,6 +2887,8 @@ async function processJob(jobId) {
       colorMode: item && item.colorMode,
       textureMode: item && item.textureMode
     })).filter((item) => item.slotId),
+    sceneId: job.sceneId || '',
+    taskType: normalizeTaskType(job),
     promptDecision: getPromptDecisionSummary(job),
     hasMask: !!editArtifacts.maskFile,
     detectionMode: editArtifacts.detectionMode,
