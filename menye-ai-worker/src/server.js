@@ -462,9 +462,11 @@ function getReferenceStylePrompt(slotId, options = {}) {
         '这张图只用于门头/门柱/外框装饰区域，不是整门款式参考，不是门扇颜色参考，也不是门板线条、把手、锁体或气窗参考。',
         'JSON 格式必须为：{"part":"门头/门柱","sourceType":"近景或整门参考","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
         '必须识别门头高度和层次、横梁/门楣造型、左右门柱宽窄、柱头柱脚、罗马柱沟槽、外框包套、雕花/线条、转角、收边、材质、表面质感和与双开门主体的衔接方式。',
+        '细节识别必须具体到可复现的装饰件：拱形门头有几层同心弧形线/台阶边、每层厚度和明暗层次；顶部中央是否有金色牌匾/小竖牌；牌匾下方是否有黑色或深色浮雕花饰、卷草纹、贝壳纹、左右延展花枝；横梁上是否有长矩形压线框、中央圆形装饰钮；左右上角是否有方形装饰块、金属三角/金字塔形饰件；左右立柱是否有内嵌长矩形框、竖向凹槽、腰线、柱脚台阶和底座层次。',
+        'details 必须列出这些具体装饰元素是否存在、相对位置、数量和形状，不能只写“欧式门头”“罗马柱”“雕花装饰”这类泛化描述。',
         'color/colorFamily 只能描述门头/门柱自身的可见颜色，不得描述或提取门扇、门板主体、把手、锁体、气窗、墙面或背景颜色。',
         '如果参考图包含整扇门，只能提取门头/门柱/门洞外圈区域，不能迁移门扇主体、左右门扇比例、门板线条、门扇颜色、把手、锁体、气窗、背景或整门款式。',
-        'applyDescription 必须说明如何把门头/门柱融合到第一张双开门整门图对应外框区域，并强调不得改变门扇外轮廓、左右门扇比例、中缝、把手位置、锁体位置、门体颜色和未点名结构。',
+        'applyDescription 必须说明如何把门头/门柱融合到第一张双开门整门图对应外框区域，并强调保留参考图中的多层拱圈、中心牌匾、下方浮雕花饰、横梁压线框、圆形装饰钮、左右方形三角饰件、立柱内嵌框和柱脚底座等关键细节；不得改变门扇外轮廓、左右门扇比例、中缝、把手位置、锁体位置、门体颜色和未点名结构。',
         '不要解释，不要输出 markdown。'
       ].join('\n');
     case 'texture-reference':
@@ -1851,13 +1853,14 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     : [];
   let targetPartText = targetParts.length ? targetParts.join('、') : '门体';
   const hasHandleDetail = referenceImages.some((item) => item.slotId === 'handle-detail');
-  const hasEdgeTrimDetail = referenceImages.some((item) => item.slotId === 'edge-trim-detail');
+  const hasHeaderColumnDetail = referenceImages.some((item) => item.slotId === 'header-column-detail');
+  const hasUploadedEdgeTrimDetail = referenceImages.some((item) => item.slotId === 'edge-trim-detail');
+  const hasEdgeTrimDetail = hasUploadedEdgeTrimDetail && !hasHeaderColumnDetail;
   const hasColorSample = referenceImages.some((item) => item.slotId === 'color-sample');
   const colorSampleUsesReferenceTexture = referenceImages.some((item) => item.slotId === 'color-sample' && item.textureMode === 'reference');
   const hasLockDetail = referenceImages.some((item) => item.slotId === 'lock-detail');
   const hasPanelStyleDetail = referenceImages.some((item) => item.slotId === 'panel-style-detail');
   const hasGlassGrilleDetail = referenceImages.some((item) => item.slotId === 'glass-grille-detail');
-  const hasHeaderColumnDetail = referenceImages.some((item) => item.slotId === 'header-column-detail');
   const hasTextureReference = referenceImages.some((item) => item.slotId === 'texture-reference');
   const hasBackgroundReference = referenceImages.some((item) => item.slotId === 'background-reference');
   const hasLeftLeafDetail = referenceImages.some((item) => item.slotId === 'left-leaf-detail');
@@ -1957,12 +1960,24 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
           : ''
       ].filter(Boolean).join('\n')
     : '';
-  const referenceStyleInstruction = buildReferenceStyleInstruction(referenceStyles, {
+  const headerColumnOverridesEdgeTrimInstruction = hasHeaderColumnDetail
+    ? [
+        '门头/门柱覆盖包边规则：本次已上传门头/门柱细节图，因此门头/门柱图同时作为双开门外框、门楣、门柱、门套外框和包边结构的主要参考来源。',
+        '不需要再执行单独包边参考任务；即使输入里同时存在包边细节图，也应以门头/门柱参考图为准，忽略包边细节图对结构和颜色的控制。',
+        '门头/门柱任务已经覆盖外框/包边区域，不能让包边图再把门头、门柱、外框颜色或结构拉回另一套样式。',
+        '门头/门柱细节保真要求：最终图不能只生成大概拱形和两根柱子，必须尽量保留参考图中可见的关键装饰件，包括多层同心拱圈/台阶边、顶部中央金色牌匾或竖牌、牌匾下方深色浮雕花饰/卷草纹、横梁长矩形压线框、中央圆形装饰钮、左右上角方形金属三角饰件、立柱内嵌长矩形框、竖向凹槽、腰线、柱脚台阶和底座层次。',
+        '门头/门柱验收失败定义：如果最终图缺少参考图中明显的中心牌匾、浮雕花饰、两侧方形三角饰件、横梁压线框或立柱内嵌框等主要装饰，只保留了简单外轮廓，就属于门头/门柱细节不足，应补回这些装饰。'
+      ].join('\n')
+    : '';
+  const effectiveReferenceStyles = hasHeaderColumnDetail
+    ? (Array.isArray(referenceStyles) ? referenceStyles.filter((style) => style && style.slotId !== 'edge-trim-detail') : [])
+    : referenceStyles;
+  const referenceStyleInstruction = buildReferenceStyleInstruction(effectiveReferenceStyles, {
     useEdgeTrimReferenceColor: userWantsIndependentEdgeTrimColor && !(!hasEdgeTrimDetail && userWantsEdgeTrimPreserveColor),
     preserveEdgeTrimColor: edgeTrimPreserveMeansReferenceColor
   });
-  const edgeTrimStyle = Array.isArray(referenceStyles)
-    ? referenceStyles.find((style) => style && style.slotId === 'edge-trim-detail')
+  const edgeTrimStyle = Array.isArray(effectiveReferenceStyles)
+    ? effectiveReferenceStyles.find((style) => style && style.slotId === 'edge-trim-detail')
     : null;
   const lockStyle = Array.isArray(referenceStyles)
     ? referenceStyles.find((style) => style && style.slotId === 'lock-detail')
@@ -2471,6 +2486,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     cutoutPreservationInstruction,
     handleStyleInstruction,
     multiLeafDoorLockInstruction,
+    headerColumnOverridesEdgeTrimInstruction,
     referenceStyleInstruction,
     requiredReferenceTaskInstruction,
     edgeTrimIndependentColorInstruction,
@@ -2648,6 +2664,10 @@ async function buildEditArtifacts(job) {
   const backgroundReference = getBackgroundReferenceImage(job);
   let handleBuffer = null;
   const referenceImages = getReferenceImages(job);
+  const hasHeaderColumnReference = referenceImages.some((item) => item && item.slotId === 'header-column-detail');
+  const effectiveReferenceImages = hasHeaderColumnReference
+    ? referenceImages.filter((item) => !(item && item.slotId === 'edge-trim-detail'))
+    : referenceImages;
   for (const referenceImage of referenceImages) {
     if (!referenceImage || !referenceImage.originalImageFileID || referenceImage.slotId === 'full-door') {
       continue;
@@ -2671,7 +2691,7 @@ async function buildEditArtifacts(job) {
   let directCompositePlacement = null;
   const referenceStyles = [];
   const detectableReferenceSlotIds = getDetectableReferenceSlotIds();
-  const hasMultiPartReference = referenceImages.some((item) => item && detectableReferenceSlotIds.includes(item.slotId));
+  const hasMultiPartReference = effectiveReferenceImages.some((item) => item && detectableReferenceSlotIds.includes(item.slotId));
   if (handleDetail) {
     try {
       handleStyle = await detectHandleStyle(
@@ -2709,7 +2729,7 @@ async function buildEditArtifacts(job) {
       detectionMode = maskBox.source || 'heuristic';
     }
   }
-  for (const referenceImage of referenceImages) {
+  for (const referenceImage of effectiveReferenceImages) {
     if (!referenceImage || !detectableReferenceSlotIds.includes(referenceImage.slotId)) {
       continue;
     }
@@ -2821,7 +2841,7 @@ async function buildEditArtifacts(job) {
       ));
     }
     inputImages.push(await createInputImage(primaryImage.originalImageFileID, primaryBuffer, `${primaryImage.slotId || 'full-door'}.png`));
-    for (const referenceImage of referenceImages) {
+    for (const referenceImage of effectiveReferenceImages) {
       if (
         !referenceImage ||
         !referenceImage.originalImageFileID ||
@@ -2838,7 +2858,7 @@ async function buildEditArtifacts(job) {
     }
   } else {
     inputImages = [await createInputImage(primaryImage.originalImageFileID, primaryBuffer, `${primaryImage.slotId || 'full-door'}.png`)];
-    for (const referenceImage of referenceImages) {
+    for (const referenceImage of effectiveReferenceImages) {
       if (!referenceImage || !referenceImage.originalImageFileID || referenceImage.slotId === 'full-door') {
         continue;
       }
@@ -2853,16 +2873,18 @@ async function buildEditArtifacts(job) {
   console.log('[worker] downloaded edit artifacts', job._id || job.jobId, {
     inputImageCount: inputImages.length,
     hasHandleDetail: !!handleDetail,
-    hasEdgeTrimDetail: referenceImages.some((item) => item && item.slotId === 'edge-trim-detail'),
-    hasColorSample: referenceImages.some((item) => item && item.slotId === 'color-sample'),
-    hasBackgroundReference: referenceImages.some((item) => item && item.slotId === 'background-reference'),
-    referenceSlots: referenceImages.map((item) => item && item.slotId).filter(Boolean),
+    hasEdgeTrimDetail: effectiveReferenceImages.some((item) => item && item.slotId === 'edge-trim-detail'),
+    hasHeaderColumnReference,
+    ignoredEdgeTrimBecauseHeaderColumn: hasHeaderColumnReference && referenceImages.some((item) => item && item.slotId === 'edge-trim-detail'),
+    hasColorSample: effectiveReferenceImages.some((item) => item && item.slotId === 'color-sample'),
+    hasBackgroundReference: effectiveReferenceImages.some((item) => item && item.slotId === 'background-reference'),
+    referenceSlots: effectiveReferenceImages.map((item) => item && item.slotId).filter(Boolean),
     inputImageOrder: backgroundReference
-      ? ['background-reference', 'full-door'].concat(referenceImages
+      ? ['background-reference', 'full-door'].concat(effectiveReferenceImages
         .map((item) => item && item.slotId)
         .filter((slotId) => slotId && slotId !== 'background-reference' && slotId !== 'full-door'))
-      : referenceImages.map((item) => item && item.slotId).filter(Boolean),
-    referenceOptions: referenceImages.map((item) => ({
+      : effectiveReferenceImages.map((item) => item && item.slotId).filter(Boolean),
+    referenceOptions: effectiveReferenceImages.map((item) => ({
       slotId: item && item.slotId,
       colorMode: item && item.colorMode,
       textureMode: item && item.textureMode
