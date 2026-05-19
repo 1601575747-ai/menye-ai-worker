@@ -1947,7 +1947,10 @@ function isHandleIntegratedLockStyle(style) {
   if (/handle-integrated|一体式|一体|集成|嵌入把手|把手内置|不可拆|同一根把手|同一块面板/.test(text)) {
     return true;
   }
-  return !!(style.referenceContainsHandle && style.hasSmartLockPanel && /把手|门把手|拉手|长拉手|长条|长杆|扶手|手柄|面板/.test(text));
+  if (style.referenceContainsHandle && style.hasSmartLockPanel && /把手|门把手|拉手|长拉手|长条|长杆|扶手|手柄|面板/.test(text)) {
+    return true;
+  }
+  return !!(style.hasSmartLockPanel && (style.handleCount >= 1 || /长条|长杆|扶手|手柄|把手|拉手|握持|一体/.test(text)));
 }
 
 function buildReferenceStyleInstruction(referenceStyles, options) {
@@ -2127,6 +2130,16 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '验收失败定义：最终图出现了把手参考图里的新智能锁/黑色锁面板/密码键盘/指纹头，或者整门照原智能锁被删除、遮挡、换款、换位置，都属于不合格。'
       ].join('\n')
     : '';
+  const lockDetailMustApplyInstruction = hasLockDetail
+    ? [
+        '智能锁强制落图规则：只要上传了 lock-detail 锁体/智能锁细节图，本次就必须把该参考图中的智能锁核心可见部件 P 到整门图上，不能只保留原门拉手或原锁具。',
+        '智能锁核心可见部件包括：黑色/金属锁面板、密码键盘、指纹识别区、刷卡区、摄像头、猫眼、门铃、锁芯孔、实体应急小圆孔、屏幕、指示灯和必要安装底座；参考图里能看到哪些，最终图中就应尽量出现对应哪些。',
+        '如果智能锁参考图与原门把手或原锁具位置冲突，lock-detail 优先级高于“保持原把手/原锁具”：允许覆盖、替换或清理原门把手附近的冲突五金，但不得改变门扇比例、门板线条、包边、门头/门柱和背景。',
+        '如果整门图是双开门/子母门/四开/六开门，应把智能锁放在主开启扇靠中缝的合理五金安装区；不要放到门板中央装饰纹样里，不要放到门头、立柱或背景上。',
+        '如果参考图是普通独立智能锁面板而不是把手一体式锁，也必须生成清晰可见的智能锁面板/锁孔/指纹或密码区；“参考图里的把手不迁移”只表示不复制普通拉手款式，不能理解为不迁移智能锁本身。',
+        '智能锁验收失败定义：最终图中没有清晰可见的新智能锁面板、密码/指纹/锁孔等参考图核心锁具特征，或者只保留原来的金色双拉手/原五金不变，都属于失败。'
+      ].join('\n')
+    : '';
   const multiLeafDoorLockInstruction = isMultiLeafDoorType
     ? [
         `多门型专属冻结：当前门类型为${doorType || '多开门'}，第一张整门图中的门扇数量、每扇门宽窄比例、中缝/拼缝位置、开门方向、左右/子母/四开/六开分割关系必须作为基础结构锁定。`,
@@ -2199,7 +2212,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     hasEdgeTrimDetail ? '包边：必须识别包边参考图中的包边结构并产生可见融合/替换效果，不能保留原包边不变' : '',
     hasLockDetail ? (lockReferenceIsHandleIntegrated
       ? `锁体/智能锁：必须按锁体/智能锁细节图替换为一体式把手锁整体，包含智能锁面板、指纹/密码/刷卡区和与其物理一体的把手；小圆孔是独立实体应急锁孔，不能放在把手或黑色智能面板上；${lockReferenceIsDoubleHandle ? '参考图是双把手，最终必须生成双把手，不能只生成单把手；' : ''}不能保留整门图里的原智能锁或原把手不变`
-      : '锁体/智能锁：必须按锁体/智能锁细节图处理锁具、锁孔、智能锁面板、猫眼、小圆孔或相关五金区域；参考图里的把手默认不迁移') : '',
+      : '锁体/智能锁：必须按锁体/智能锁细节图处理锁具、锁孔、智能锁面板、猫眼、小圆孔或相关五金区域；最终必须出现清晰可见的智能锁/锁具核心特征，不能只保留原把手不变；参考图里的普通把手默认不迁移，但智能锁面板和锁孔必须迁移') : '',
     hasPanelStyleDetail ? '门板线条/造型：必须按门板线条/造型细节图处理门扇表面的线条、压线、门芯凹凸或造型结构' : '',
     hasGlassGrilleDetail ? '气窗：必须按气窗细节图处理玻璃、镂空、格栅、透光窗或对应装饰区域' : '',
     hasHeaderColumnDetail ? '门头/门柱：必须按门头/门柱细节图处理双开门门头、门楣、门柱、立柱或外框装饰区域' : '',
@@ -2399,14 +2412,14 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
           '替换前必须先检查第一张整门图中是否存在原智能锁或隐蔽智能锁：凡是类似锁、拉手、黑色面板、装饰块或小五金的物体附近有一个不属于门花纹的小圆孔/锁孔/指示孔，就应判定为原智能锁区域。该原智能锁区域必须被本次参考智能锁覆盖或清理，不能残留在最终图里，也不能把原智能锁和新智能锁同时画出来。',
           lockReferenceIsHandleIntegrated
             ? `系统识别到该智能锁与把手为物理一体式结构，因此本次锁体任务必须把智能锁面板和一体式把手作为同一个不可拆整体替换到整门图上；把手数量、长度、宽窄、颜色和面板位置应随一体式锁具一起保持一致，不能保留整门图里的原智能锁/原把手。小圆孔是独立实体应急锁孔，不属于把手本体，不能放在把手或黑色智能面板上。${lockReferenceIsDoubleHandle ? '参考图为双把手结构，必须在最终图中保留两根对应把手及其相对位置；不能减少成单把手。' : ''}`
-            : '系统未识别为把手一体式智能锁，因此即使锁体参考图里拍到了把手，也只能把把手当作定位参考，不能迁移把手款式；整门图里有把手就保留原把手，整门图里没有把手就不要新增把手。',
+            : '系统未识别为把手一体式智能锁，因此即使锁体参考图里拍到了普通把手，也只能把普通把手当作定位参考，不复制普通把手款式；但智能锁面板、密码/指纹/刷卡区、锁芯孔、小圆孔和必要底座必须迁移到整门图。若原把手或原五金遮挡智能锁安装位置，允许覆盖或清理冲突区域，不能因为“保留原把手”而跳过智能锁。',
           lockStyle && lockStyle.hasRoundHole
             ? `智能锁参考图包含小圆孔，最终图必须保留真实实体应急锁孔细节；${lockStyle.roundHoleDescription || '小圆孔应位于智能锁或门缝附近的合理位置'}；相对位置=${lockStyle.roundHoleRelativePosition || '按参考图相对智能面板、把手和门缝的位置'}。一体式把手锁时，小圆孔不能在把手本体或黑色智能面板上，应位于门扇/中缝附近的独立位置；如果把手附近没有足够空间，可以让小圆孔整体小幅移动，但必须保持它相对智能面板、把手和门缝的关系，不要挪到门板中央或错误门扇。`
             : '如果智能锁结构需要小圆孔、锁芯孔或指示孔，应按参考图真实位置和尺寸保守添加；不要凭空放大或放到门板中央。',
           '如果参考图中包含整门，只能提取锁具外观，不能迁移参考图里的门板线条、包边、颜色、背景或整门款式。',
           lockReferenceIsHandleIntegrated
             ? '一体式智能锁修改仍不得改变门扇外轮廓、门板线条数量、门型比例、包边结构和背景；但一体式把手锁所在区域必须产生清晰可见的替换结果。为保持智能面板、把手和实体应急锁孔的相对位置，可以小幅度移动整个一体式把手锁的位置；移动幅度只限于五金安装区域内的对齐调整，不能大幅偏离原门合理安装区。把手长度不得明显缩短或变成与参考图不同的比例。'
-            : '非一体式锁体/智能锁修改不得改变门扇外轮廓、门板线条数量、门型比例、包边结构、背景和原把手位置。'
+            : '非一体式锁体/智能锁修改不得改变门扇外轮廓、门板线条数量、门型比例、包边结构和背景；但锁具安装区必须有清晰可见的新智能锁结果，允许为了放置智能锁面板而覆盖原锁具、旧锁孔或与锁具冲突的局部把手底座。'
         ].join('\n')
       : '',
     hasPanelStyleDetail
@@ -2686,6 +2699,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     cutoutPreservationInstruction,
     handleStyleInstruction,
     handleReferenceSmartLockFreezeInstruction,
+    lockDetailMustApplyInstruction,
     multiLeafDoorLockInstruction,
     headerColumnOverridesEdgeTrimInstruction,
     referenceStyleInstruction,
