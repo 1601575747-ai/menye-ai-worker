@@ -1555,8 +1555,10 @@ async function detectHandleStyle(primaryBuffer, primaryFileID, handleBuffer, han
             type: 'input_text',
             text: [
               '请识别第二张门把手细节图中的门把手外观特征，只返回 JSON。',
-              'JSON 格式必须为：{"color":"...","material":"...","finish":"...","shape":"...","base":"...","details":"..."}。',
+              'JSON 格式必须为：{"color":"...","material":"...","finish":"...","shape":"...","base":"...","details":"...","containsSmartLock":true或false,"smartLockInterference":"..."}。',
               '其中 color 表示可见主颜色，material 表示材质，finish 表示表面工艺或质感，shape 表示主体造型，base 表示把手底座/面板特征，details 表示纹路、转角、装饰、镂空、线条等关键细节。',
+              '第二张图只作为“门把手”参考；如果图里同时出现智能锁、黑色锁面板、密码键盘、指纹头、摄像头、猫眼、锁芯、圆形应急孔或门铃，请把它们标记为 smartLockInterference，不要混入门把手的 shape/base/details。',
+              'containsSmartLock 表示第二张门把手细节图是否包含上述锁体/智能锁干扰物；smartLockInterference 简述这些非把手部件的位置和外观。',
               '不要解释，不要输出 markdown。'
             ].join('\n')
           },
@@ -1587,7 +1589,9 @@ async function detectHandleStyle(primaryBuffer, primaryFileID, handleBuffer, han
     finish: parsed.finish || '',
     shape: parsed.shape || '',
     base: parsed.base || '',
-    details: parsed.details || ''
+    details: parsed.details || '',
+    containsSmartLock: Boolean(parsed.containsSmartLock),
+    smartLockInterference: parsed.smartLockInterference || ''
   };
 }
 
@@ -1606,6 +1610,9 @@ async function detectHandleMaskBox(primaryBuffer, primaryFileID, handleBuffer, h
               `门类型：${job && job.doorType ? job.doorType : '未指定'}`,
               '第一张图是整门照，第二张图是要融合上去的门把手细节图。',
               '请在整门照中找到最适合替换为该门把手的位置。',
+              '注意：第二张门把手图如果包含智能锁、黑色锁面板、密码键盘、指纹头、摄像头、猫眼、锁芯或圆形应急孔，这些都不是把手替换目标。',
+              '如果第一张整门照原本有智能锁，请不要把智能锁区域框进把手 mask；只框住原把手握持件、把手底座及极小衔接边缘。',
+              '如果把手和智能锁距离很近，优先给出更小的把手-only 框，宁可少框一点，也不要覆盖整门照中的原智能锁。',
               '只返回 JSON，不要返回任何额外文字。',
               'JSON 格式必须为：{"left":整数,"top":整数,"right":整数,"bottom":整数}。',
               `坐标基于第一张图原始尺寸 width=${size.width}, height=${size.height}。`,
@@ -1920,6 +1927,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const handleStyleInstruction = handleStyle && (handleStyle.color || handleStyle.material || handleStyle.finish || handleStyle.shape || handleStyle.base || handleStyle.details)
     ? [
         `系统识别到门把手细节特征：颜色=${handleStyle.color || '未识别'}；材质=${handleStyle.material || '未识别'}；表面质感=${handleStyle.finish || '未识别'}；主体造型=${handleStyle.shape || '未识别'}；底座/面板=${handleStyle.base || '未识别'}；关键细节=${handleStyle.details || '未识别'}。`,
+        handleStyle.containsSmartLock || handleStyle.smartLockInterference
+          ? `系统同时识别到门把手细节图中含有非把手锁体/智能锁干扰物：${handleStyle.smartLockInterference || '存在智能锁、锁面板或锁芯类部件'}。这些干扰物不能作为把手样式、底座或装饰细节迁移到整门图。`
+          : '',
         allowHandleColorChange
           ? '用户这次明确要求调整门把手颜色，因此颜色可以按用户要求改变；但主体造型、材质观感、底座结构和关键细节仍应尽量保持与细节图一致。'
           : '最终成图中的门把手必须优先保持细节图中的颜色，不要因为环境光或门体配色自动改成其他颜色。',
@@ -1929,10 +1939,19 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         allowHandleBaseChange
           ? '用户这次明确要求调整底座或只保留主体，因此底座相关结构可以按要求删减或弱化；但不要顺带改变把手主体样式。'
           : '底座/面板结构也应尽量保持与细节图一致，不要擅自删除或替换。'
-      ].join('\n')
+      ].filter(Boolean).join('\n')
     : hasHandleDetail
       ? '门把手颜色、材质、主体造型、底座结构和关键细节都必须以门把手细节图为准；如果用户明确要求改变其中某项，则只改那一项。'
       : '当前没有门把手细节图，请只在整门图中识别现有门把手；除非用户明确要求，不要擅自改变门把手款式、颜色、材质、底座结构或关键细节。';
+  const handleReferenceSmartLockFreezeInstruction = hasHandleDetail && !hasLockDetail
+    ? [
+        '把手图含锁防污染规则：本次上传的是门把手细节图，不是锁体/智能锁细节图；除非另有 lock-detail 智能锁细节图，否则门把手图只允许控制门把手握持件、把手底座和必要安装衔接。',
+        '如果门把手细节图里同时拍到了智能锁、黑色锁面板、密码键盘、指纹头、摄像头、猫眼、锁芯、圆形应急孔、门铃或其他锁体部件，这些都必须视为非把手干扰信息，不能被复制、替换、移动或覆盖到最终整门图。',
+        '整门照中原本存在的智能锁/锁体/锁芯/猫眼/门铃位置、数量、尺寸、外观和与把手的相对关系必须保留；不得把把手图里的智能锁 P 到门上，也不得用把手图里的锁替换整门照原锁。',
+        '如果参考图中的把手与智能锁是一体式结构，但用户没有上传智能锁细节图，则只提取可分离的把手握持造型；不可分离时优先保留整门照原智能锁和原锁区域，仅做把手外观融合。',
+        '验收失败定义：最终图出现了把手参考图里的新智能锁/黑色锁面板/密码键盘/指纹头，或者整门照原智能锁被删除、遮挡、换款、换位置，都属于不合格。'
+      ].join('\n')
+    : '';
   const multiLeafDoorLockInstruction = isMultiLeafDoorType
     ? [
         `多门型专属冻结：当前门类型为${doorType || '多开门'}，第一张整门图中的门扇数量、每扇门宽窄比例、中缝/拼缝位置、开门方向、左右/子母/四开/六开分割关系必须作为基础结构锁定。`,
@@ -2485,6 +2504,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     doorIdentityLockInstruction,
     cutoutPreservationInstruction,
     handleStyleInstruction,
+    handleReferenceSmartLockFreezeInstruction,
     multiLeafDoorLockInstruction,
     headerColumnOverridesEdgeTrimInstruction,
     referenceStyleInstruction,
