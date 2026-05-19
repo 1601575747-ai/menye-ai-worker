@@ -1799,9 +1799,11 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
 function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const requirementText = job && job.requirement ? String(job.requirement) : '';
   const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
+  const doorType = job && job.doorType ? String(job.doorType) : '';
   const taskType = normalizeTaskType(job);
   const isDimensionAnnotationTask = taskType === 'dimension-annotation';
   const isPartsComposeTask = taskType === 'parts-compose';
+  const isMultiLeafDoorType = /双开门|子母门|四开子母门|四开平分门|六开门/.test(doorType);
   const referenceImages = getReferenceImages(job);
   const userSelectedEdgeTrimReferenceColor = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail' && item.colorMode === 'reference');
   const allowHandleColorChange = /把手.*颜色|颜色.*把手|门把手.*颜色|颜色.*门把手|调成门的颜色|改成门的颜色|同门颜色|跟门同色|与门同色/.test(requirementText);
@@ -1858,6 +1860,10 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   const hasHeaderColumnDetail = referenceImages.some((item) => item.slotId === 'header-column-detail');
   const hasTextureReference = referenceImages.some((item) => item.slotId === 'texture-reference');
   const hasBackgroundReference = referenceImages.some((item) => item.slotId === 'background-reference');
+  const hasLeftLeafDetail = referenceImages.some((item) => item.slotId === 'left-leaf-detail');
+  const hasRightLeafDetail = referenceImages.some((item) => item.slotId === 'right-leaf-detail');
+  const hasChildLeafDetail = referenceImages.some((item) => item.slotId === 'child-leaf-detail');
+  const hasMiddleJoinDetail = referenceImages.some((item) => item.slotId === 'middle-join-detail');
   const userWantsIndependentHeaderColumnColor = /(?:门头|门楣|门柱|立柱|罗马柱|外框)[^。；，,.]{0,28}(?:单独|独立|不要同门|不跟门|不同色|另外|另做|按参考图颜色|用参考图颜色|保持原色|颜色保持不变|颜色不变)|(?:单独|独立|不要同门|不跟门|不同色|另外|另做)[^。；，,.]{0,28}(?:门头|门楣|门柱|立柱|罗马柱|外框)/.test(requirementText);
   const colorSampleAppliesToHeaderColumn = hasColorSample && hasHeaderColumnDetail && !userWantsIndependentHeaderColumnColor;
   const orderedReferenceImages = hasBackgroundReference
@@ -1924,6 +1930,33 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     : hasHandleDetail
       ? '门把手颜色、材质、主体造型、底座结构和关键细节都必须以门把手细节图为准；如果用户明确要求改变其中某项，则只改那一项。'
       : '当前没有门把手细节图，请只在整门图中识别现有门把手；除非用户明确要求，不要擅自改变门把手款式、颜色、材质、底座结构或关键细节。';
+  const multiLeafDoorLockInstruction = isMultiLeafDoorType
+    ? [
+        `多门型专属冻结：当前门类型为${doorType || '多开门'}，第一张整门图中的门扇数量、每扇门宽窄比例、中缝/拼缝位置、开门方向、左右/子母/四开/六开分割关系必须作为基础结构锁定。`,
+        '禁止把双开门变成单开门，禁止把子母门变成双开平分门，禁止把四开/六开门合并、删减、增补门扇，也禁止把左右门扇比例自动拉平均。',
+        doorType === '双开门'
+          ? '双开门必须保留左右两扇门和中缝位置；除非客户明确要求，不要改变左右对称关系、双把手相对位置和中缝收口。'
+          : '',
+        doorType === '子母门'
+          ? '子母门必须保留子门/母门宽窄比例和中缝位置；不要把小门扇放大成平分双开门，也不要删除小门扇。'
+          : '',
+        doorType === '四开子母门'
+          ? '四开子母门必须保留四扇门、子母比例、左右分组和各中缝位置；不要改成四开平分门或普通双开门。'
+          : '',
+        doorType === '四开平分门'
+          ? '四开平分门必须保留四扇均分关系和三条主要拼缝；不要改成子母比例或双开门。'
+          : '',
+        doorType === '六开门'
+          ? '六开门必须保留六扇门的分割数量、对称关系和各拼缝位置；不要减少成四开、双开或单开。'
+          : '',
+        hasLeftLeafDetail || hasRightLeafDetail || hasChildLeafDetail || hasMiddleJoinDetail
+          ? '左右门扇、小门扇和中缝/拼接细节照只用于补充对应局部细节和定位关系，不是整门换款参考；不能因为这些上下文图改变第一张整门图的门扇数量、比例、门型结构、把手位置或锁体位置。'
+          : '',
+        hasMiddleJoinDetail
+          ? '中缝/拼接细节照只约束门缝收口、拼接条、对缝、压条和局部衔接方式；不得带动门扇宽度、门扇数量、门面颜色或门板整体造型变化。'
+          : ''
+      ].filter(Boolean).join('\n')
+    : '';
   const referenceStyleInstruction = buildReferenceStyleInstruction(referenceStyles, {
     useEdgeTrimReferenceColor: userWantsIndependentEdgeTrimColor && !(!hasEdgeTrimDetail && userWantsEdgeTrimPreserveColor),
     preserveEdgeTrimColor: edgeTrimPreserveMeansReferenceColor
@@ -2437,6 +2470,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     doorIdentityLockInstruction,
     cutoutPreservationInstruction,
     handleStyleInstruction,
+    multiLeafDoorLockInstruction,
     referenceStyleInstruction,
     requiredReferenceTaskInstruction,
     edgeTrimIndependentColorInstruction,
