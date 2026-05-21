@@ -2657,11 +2657,11 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   ].join('\n');
   const frontDimensionSpanInstruction = isDimensionAnnotationTask && dimensionAnnotationData.viewSide === 'front'
     ? (dimensionAnnotationData.hasDoorOpeningRequest && dimensionAnnotationData.hasVisibleOpeningRequest
-      ? '正面图门洞/见光尺寸取线规则：客户同时要求标注门洞尺寸和见光尺寸时，见光尺寸标注到不含包边的净可见开口边界；门洞尺寸标注到含包边外侧的一半对应边界。两组尺寸线必须分层错开，不能画在同一条边界上。'
+      ? '正面图门洞/见光尺寸取线规则：客户同时要求标注门洞尺寸和见光尺寸时，必须形成三层清晰边界：含包边尺寸标最外侧包边外沿；门洞尺寸标包边厚度中线/半包边位置，不标到最外沿，也不标到净见光边；见光尺寸标不含包边的净可见开口边界。三组横向尺寸线从外到内依次为含包边宽、门洞宽、见光宽；三组竖向尺寸线从外到内依次为含包边高、门洞高、见光高。各组尺寸线必须分层错开，不能共用同一条边界。'
       : dimensionAnnotationData.hasDoorOpeningRequest
-        ? '正面图门洞尺寸取线规则：客户要求标注门洞尺寸且未要求标注见光尺寸时，门洞尺寸按不含包边的那部分取线，也就是标到净开口/可见洞口边界，不把包边厚度算进去。'
+        ? '正面图门洞尺寸取线规则：客户要求标注门洞尺寸且未要求标注见光尺寸时，门洞尺寸按不含包边的那部分取线，标到净开口/可见洞口边界，不把包边厚度算进去；此时不要再额外画见光尺寸线。'
         : dimensionAnnotationData.hasVisibleOpeningRequest
-          ? '正面图见光尺寸取线规则：客户未要求标注门洞尺寸但要求标注见光尺寸时，见光尺寸按不包含门洞洞口外扩部分的可见范围取线，只标客户需要的见光边界。'
+          ? '正面图见光尺寸取线规则：客户未要求标注门洞尺寸但要求标注见光尺寸时，见光尺寸按不包含门洞洞口外扩部分的可见范围取线，只标客户需要的见光边界；此时不要再额外画门洞尺寸线。'
           : '')
     : '';
   const dimensionAnnotationInstruction = isDimensionAnnotationTask
@@ -2676,6 +2676,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         '墙体厚度标注规则：如果客户填写墙体厚度，不要画尺寸线；只在画面右下角空白处单独写两行文字，格式必须为“墙体厚度：”换行“xxxmm”。',
         '含气窗高取线规则：从气窗最上沿标到门的最下沿，包含气窗和门体整体高度；不要标气窗自身净高。',
         '含门头宽/含门头高取线规则：含门头宽标整套门与门头、门柱合在一起的最外侧总宽；含门头高标整套门与门头、门柱合在一起的最上沿到最下沿总高。',
+        '尺寸线边界硬约束：每个被填写的尺寸只画对应一条横向或竖向尺寸线；没有被填写/选择的项目不要补线。横向尺寸线必须贴近对应左右边界，竖向尺寸线必须贴近对应上下边界；不要为了排版把门洞线、见光线、含包边线画到错误层级。',
         `本门类可选尺寸输入项：${dimensionAnnotationData.fields.map((field) => `${field.label}(${field.unit})`).join('、')}。这些项目都是前端可给客户填写的数字输入框，单位固定为 mm。`,
         dimensionAnnotationData.provided.length
           ? `客户已选择/填写的尺寸项：${dimensionAnnotationData.provided.map((field) => `${field.annotationLabel}${field.valueText ? `：${field.valueText}` : '：待测'}`).join('；')}。最终图必须优先标注这些项目。`
