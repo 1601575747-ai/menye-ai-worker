@@ -116,31 +116,18 @@ const DIMENSION_DOOR_TYPES = [
 const COMMON_DIMENSION_FIELDS = [
   { key: 'openingWidth', label: '门洞宽', annotationLabel: '门洞宽', unit: 'mm' },
   { key: 'openingHeight', label: '门洞高', annotationLabel: '门洞高', unit: 'mm' },
+  { key: 'visibleOpeningWidth', label: '见光宽', annotationLabel: '见光宽', unit: 'mm' },
+  { key: 'visibleOpeningHeight', label: '见光高', annotationLabel: '见光高', unit: 'mm' },
   { key: 'withEdgeTrimWidth', label: '含包边宽', annotationLabel: '含包边宽', unit: 'mm' },
   { key: 'withEdgeTrimHeight', label: '含包边高', annotationLabel: '含包边高', unit: 'mm' },
-  { key: 'doorLeafWidth', label: '门扇宽', annotationLabel: '门扇宽', unit: 'mm' },
-  { key: 'doorLeafHeight', label: '门扇高', annotationLabel: '门扇高', unit: 'mm' },
-  { key: 'edgeTrimWidth', label: '包边宽', annotationLabel: '包边宽', unit: 'mm' },
-  { key: 'trimLineWidth', label: '门套线宽', annotationLabel: '门套线宽', unit: 'mm' },
   { key: 'wallThickness', label: '墙体厚度', annotationLabel: '墙体厚度', unit: 'mm' },
-  { key: 'frameDepth', label: '门套厚度', annotationLabel: '门套厚度', unit: 'mm' },
-  { key: 'handleCenterHeight', label: '把手中心离地', annotationLabel: '把手中心高', unit: 'mm' },
-  { key: 'lockCenterHeight', label: '锁体中心离地', annotationLabel: '锁体中心高', unit: 'mm' },
-  { key: 'hingeTopPosition', label: '上合页离门顶', annotationLabel: '上合页位置', unit: 'mm' },
-  { key: 'hingeMiddlePosition', label: '中合页离门顶', annotationLabel: '中合页位置', unit: 'mm' },
-  { key: 'hingeBottomPosition', label: '下合页离门底', annotationLabel: '下合页位置', unit: 'mm' },
-  { key: 'glassWidth', label: '玻璃/透光窗宽', annotationLabel: '玻璃宽', unit: 'mm' },
-  { key: 'glassHeight', label: '玻璃/透光窗高', annotationLabel: '玻璃高', unit: 'mm' },
-  { key: 'transomWidth', label: '气窗宽', annotationLabel: '气窗宽', unit: 'mm' },
-  { key: 'transomHeight', label: '气窗高', annotationLabel: '气窗高', unit: 'mm' },
-  { key: 'headerHeight', label: '门头高', annotationLabel: '门头高', unit: 'mm' },
-  { key: 'columnWidth', label: '门柱宽', annotationLabel: '门柱宽', unit: 'mm' }
+  { key: 'transomHeight', label: '含气窗高', annotationLabel: '含气窗高', unit: 'mm' },
+  { key: 'headerWidth', label: '含门头宽', annotationLabel: '含门头宽', unit: 'mm' },
+  { key: 'headerHeight', label: '含门头高', annotationLabel: '含门头高', unit: 'mm' }
 ];
 
 const DOOR_TYPE_DIMENSION_FIELDS = {
-  '单开门': [
-    { key: 'clearPassageWidth', label: '净通行宽', annotationLabel: '净通行宽', unit: 'mm' }
-  ],
+  '单开门': [],
   '双开门': [
     { key: 'totalLeafWidth', label: '双扇总宽', annotationLabel: '双扇总宽', unit: 'mm' },
     { key: 'leftLeafWidth', label: '左门扇宽', annotationLabel: '左扇宽', unit: 'mm' },
@@ -204,11 +191,18 @@ function normalizeDimensionDoorType(value) {
   return '单开门';
 }
 
-function getDimensionFieldOptions(doorType) {
+function getDimensionFieldOptions(doorType, viewSide) {
   const normalizedDoorType = normalizeDimensionDoorType(doorType);
+  const normalizedViewSide = viewSide === 'back' ? 'back' : 'front';
+  const sideFields = normalizedViewSide === 'back'
+    ? [
+        { key: 'hingeSideGap', label: '合页侧边距', annotationLabel: '合页侧边距', unit: 'mm' }
+      ]
+    : [];
   const seen = new Set();
   return COMMON_DIMENSION_FIELDS
     .concat(DOOR_TYPE_DIMENSION_FIELDS[normalizedDoorType] || [])
+    .concat(sideFields)
     .filter((field) => {
       if (!field || !field.key || seen.has(field.key)) {
         return false;
@@ -259,7 +253,8 @@ function getDimensionInputMap(job) {
 
 function buildDimensionAnnotationData(job) {
   const doorType = normalizeDimensionDoorType(job && job.doorType);
-  const fields = getDimensionFieldOptions(doorType);
+  const viewSide = job && job.dimensionViewSide === 'back' ? 'back' : 'front';
+  const fields = getDimensionFieldOptions(doorType, viewSide);
   const inputMap = getDimensionInputMap(job);
   const selectedKeys = Array.isArray(job && job.dimensionSelectedKeys)
     ? job.dimensionSelectedKeys.map((item) => String(item || '')).filter(Boolean)
@@ -271,8 +266,20 @@ function buildDimensionAnnotationData(job) {
       valueText: normalizeDimensionValue(inputMap[field.key])
     }))
     .filter((field) => field.valueText || selectedSet.has(field.key));
+  const providedKeys = new Set(provided.map((field) => field.key));
+  const requirementText = job && job.requirement ? String(job.requirement) : '';
+  const hasDoorOpeningRequest = providedKeys.has('openingWidth') ||
+    providedKeys.has('openingHeight') ||
+    /门洞/.test(requirementText);
+  const hasVisibleOpeningRequest = providedKeys.has('visibleOpeningWidth') ||
+    providedKeys.has('visibleOpeningHeight') ||
+    /见光/.test(requirementText);
   return {
     doorType,
+    viewSide,
+    viewSideLabel: viewSide === 'back' ? '背面图' : '正面图',
+    hasDoorOpeningRequest,
+    hasVisibleOpeningRequest,
     fields,
     provided
   };
@@ -2648,21 +2655,38 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
     '门型锁定、参考图自动识别、包边独立替换、颜色分层、背景边界和未点名区域冻结都由系统提示词自动处理。',
     '除非客户非常明确地点名要覆盖某个部件的颜色、样式或背景，否则补充要求不能削弱已上传参考图对应的自动任务。'
   ].join('\n');
+  const frontDimensionSpanInstruction = isDimensionAnnotationTask && dimensionAnnotationData.viewSide === 'front'
+    ? (dimensionAnnotationData.hasDoorOpeningRequest && dimensionAnnotationData.hasVisibleOpeningRequest
+      ? '正面图门洞/见光尺寸取线规则：客户同时要求标注门洞尺寸和见光尺寸时，见光尺寸标注到不含包边的净可见开口边界；门洞尺寸标注到含包边外侧的一半对应边界。两组尺寸线必须分层错开，不能画在同一条边界上。'
+      : dimensionAnnotationData.hasDoorOpeningRequest
+        ? '正面图门洞尺寸取线规则：客户要求标注门洞尺寸且未要求标注见光尺寸时，门洞尺寸按不含包边的那部分取线，也就是标到净开口/可见洞口边界，不把包边厚度算进去。'
+        : dimensionAnnotationData.hasVisibleOpeningRequest
+          ? '正面图见光尺寸取线规则：客户未要求标注门洞尺寸但要求标注见光尺寸时，见光尺寸按不包含门洞洞口外扩部分的可见范围取线，只标客户需要的见光边界。'
+          : '')
+    : '';
   const dimensionAnnotationInstruction = isDimensionAnnotationTask
     ? [
         '尺寸标注任务：本次用途是“尺寸标注图”，输出应是在第一张整门照上叠加清晰、工整、可读的尺寸辅助线、箭头、引线和文字标注。',
         `尺寸标注门类：${dimensionAnnotationData.doorType}。不同门类必须按对应结构标注，例如双开门要能标左右扇和中缝，子母门要能标子门/母门，四开/六开门要能标各门扇分段。`,
+        `尺寸标注图面方向：${dimensionAnnotationData.viewSideLabel}。必须按这张图的实际可见面标注，不要把正面和背面的五金、合页、开启方向、左右关系混用。`,
+        dimensionAnnotationData.viewSide === 'back'
+          ? '背面图标注规则：以客户从背面看到的左右为准；只标注客户在结构化输入里选择/填写的尺寸项。未出现在可选输入项里的五金、合页和玻璃类尺寸不要主动标注。'
+          : '正面图标注规则：以客户从正面看到的左右为准；只标注客户在结构化输入里选择/填写的尺寸项。未出现在可选输入项里的五金、合页和玻璃类尺寸不要主动标注。',
+        frontDimensionSpanInstruction,
+        '墙体厚度标注规则：如果客户填写墙体厚度，不要画尺寸线；只在画面右下角空白处单独写两行文字，格式必须为“墙体厚度：”换行“xxxmm”。',
+        '含气窗高取线规则：从气窗最上沿标到门的最下沿，包含气窗和门体整体高度；不要标气窗自身净高。',
+        '含门头宽/含门头高取线规则：含门头宽标整套门与门头、门柱合在一起的最外侧总宽；含门头高标整套门与门头、门柱合在一起的最上沿到最下沿总高。',
         `本门类可选尺寸输入项：${dimensionAnnotationData.fields.map((field) => `${field.label}(${field.unit})`).join('、')}。这些项目都是前端可给客户填写的数字输入框，单位固定为 mm。`,
         dimensionAnnotationData.provided.length
           ? `客户已选择/填写的尺寸项：${dimensionAnnotationData.provided.map((field) => `${field.annotationLabel}${field.valueText ? `：${field.valueText}` : '：待测'}`).join('；')}。最终图必须优先标注这些项目。`
           : '客户未填写结构化尺寸数值；可以根据补充要求中的明确尺寸做标注，否则只标项目名称或“待测”。',
         '所有尺寸单位必须显示为 mm。客户输入字段只表示数字，但最终图中文字必须补上 mm，例如输入 2050 时标为 2050mm。',
-        '标注优先级：优先标注客户结构化输入的尺寸值，其次标注客户补充要求中给出的具体尺寸值；常见项目包括门洞宽、门洞高、含包边宽、含包边高、门扇宽、门扇高、墙体厚度/门套厚度、门套线宽、包边宽、把手中心离地、锁体中心离地、合页位置、气窗/透光窗区域尺寸和开启方向。',
-        '严禁编造尺寸：如果客户没有提供某个具体数值，不要凭空写 900mm、2100mm 等数字；可以只标注项目名称，如“门洞宽”“门扇高”“把手中心高”，或使用“待测”提示。',
+        '标注优先级：优先标注客户结构化输入的尺寸值，其次标注客户补充要求中给出的具体尺寸值；常见项目包括门洞宽、门洞高、见光宽、见光高、含包边宽、含包边高、墙体厚度、含气窗高、含门头宽、含门头高、各门扇分段宽和中缝宽。',
+        '严禁编造尺寸：如果客户没有提供某个具体数值，不要凭空写 900mm、2100mm 等数字；可以只标注项目名称，如“门洞宽”“含包边高”“含气窗高”，或使用“待测”提示。',
         '尺寸标注必须像施工沟通图：线条沿门洞、门扇、包边或五金对应边缘摆放，文字不要遮挡门体关键细节；标注应横平竖直、层级清楚、中文可读。',
         '尺寸标注不是重新设计门。除叠加标注线、箭头和文字外，必须保持原门、包边、把手、锁体、玻璃、背景、颜色、材质、光影和构图不变。',
         '如果客户同时上传了包边、颜色、锁体、门板造型、气窗或材质纹理参考图，先按对应任务完成局部编辑，再在最终图上叠加尺寸标注；尺寸标注不能覆盖或削弱这些局部任务。'
-      ].join('\n')
+      ].filter(Boolean).join('\n')
     : '';
   const backgroundInputOrderInstruction = hasBackgroundReference
     ? [
@@ -3372,8 +3396,12 @@ const server = http.createServer(async (req, res) => {
       unit: 'mm',
       inputMode: 'number',
       doorTypes: DIMENSION_DOOR_TYPES,
+      viewSides: [
+        { value: 'front', label: '正面图' },
+        { value: 'back', label: '背面图' }
+      ],
       doorType,
-      fields: getDimensionFieldOptions(doorType).map((field) => ({
+      fields: getDimensionFieldOptions(doorType, requestUrl.searchParams.get('viewSide') || '').map((field) => ({
         key: field.key,
         label: field.label,
         annotationLabel: field.annotationLabel,
