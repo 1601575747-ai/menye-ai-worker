@@ -2657,11 +2657,11 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
   ].join('\n');
   const frontDimensionSpanInstruction = isDimensionAnnotationTask && dimensionAnnotationData.viewSide === 'front'
     ? (dimensionAnnotationData.hasDoorOpeningRequest && dimensionAnnotationData.hasVisibleOpeningRequest
-      ? '正面图门洞/见光尺寸取线规则：客户同时要求标注门洞尺寸和见光尺寸时，必须形成三层清晰边界：含包边尺寸标最外侧包边外沿；门洞尺寸标包边厚度中线/半包边位置，不标到最外沿，也不标到净见光边；见光尺寸标不含包边的净可见开口边界。三组横向尺寸线从外到内依次为含包边宽、门洞宽、见光宽；三组竖向尺寸线从外到内依次为含包边高、门洞高、见光高。各组尺寸线必须分层错开，不能共用同一条边界。'
+      ? '正面图门洞/见光尺寸取线规则：客户同时要求标注门洞尺寸和见光尺寸时，横向宽度必须形成三层清晰边界：含包边宽标最外侧包边外沿；门洞宽标包边厚度中线/半包边位置；见光宽标不含包边的净可见开口边界。竖向高度的底部如果没有下槛、气窗、门头或其他额外部件，应共用门底同一个下边界；不要为了分层把底部画到不同位置。竖向高度只通过上边界区分：含包边高的上边界取最外侧上包边外沿，门洞高的上边界取上包边厚度中线/半包边位置，见光高的上边界取不含包边的净可见开口上边界。'
       : dimensionAnnotationData.hasDoorOpeningRequest
-        ? '正面图门洞尺寸取线规则：客户要求标注门洞尺寸且未要求标注见光尺寸时，门洞尺寸按不含包边的那部分取线，标到净开口/可见洞口边界，不把包边厚度算进去；此时不要再额外画见光尺寸线。'
+        ? '正面图门洞尺寸取线规则：客户要求标注门洞尺寸且未要求标注见光尺寸时，门洞宽按不含包边的那部分取线，标到净开口/可见洞口边界，不把包边厚度算进去；门洞高的下边界取门底，门洞高的上边界取不含包边的净开口/可见洞口上边界；此时不要再额外画见光尺寸线。'
         : dimensionAnnotationData.hasVisibleOpeningRequest
-          ? '正面图见光尺寸取线规则：客户未要求标注门洞尺寸但要求标注见光尺寸时，见光尺寸按不包含门洞洞口外扩部分的可见范围取线，只标客户需要的见光边界；此时不要再额外画门洞尺寸线。'
+          ? '正面图见光尺寸取线规则：客户未要求标注门洞尺寸但要求标注见光尺寸时，见光宽按不包含门洞洞口外扩部分的可见范围取线；见光高的下边界取门底，见光高的上边界取净可见开口上边界；此时不要再额外画门洞尺寸线。'
           : '')
     : '';
   const dimensionAnnotationInstruction = isDimensionAnnotationTask
