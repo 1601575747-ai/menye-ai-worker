@@ -1866,6 +1866,91 @@ async function detectDoorPlacement(primaryBuffer, primaryFileID, backgroundBuffe
   };
 }
 
+function normalizeDimensionBox(value, size, source) {
+  const box = normalizeMaskBox(value, size, source);
+  if (!box) {
+    return null;
+  }
+  return {
+    left: box.left,
+    top: box.top,
+    right: box.right,
+    bottom: box.bottom,
+    source: box.source
+  };
+}
+
+function normalizeDimensionY(value, size) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || !size || !size.height) {
+    return null;
+  }
+  return Math.max(0, Math.min(size.height, Math.round(number)));
+}
+
+function normalizeDimensionBoxes(parsed, size) {
+  if (!parsed || !size) {
+    return null;
+  }
+  const result = {
+    outerTrimBox: normalizeDimensionBox(parsed.outerTrimBox, size, 'dimension-outer-trim'),
+    openingMidlineBox: normalizeDimensionBox(parsed.openingMidlineBox, size, 'dimension-opening-midline'),
+    visibleOpeningBox: normalizeDimensionBox(parsed.visibleOpeningBox, size, 'dimension-visible-opening'),
+    headerOuterBox: normalizeDimensionBox(parsed.headerOuterBox, size, 'dimension-header-outer'),
+    transomTopY: normalizeDimensionY(parsed.transomTopY, size),
+    doorBottomY: normalizeDimensionY(parsed.doorBottomY, size),
+    heightBottomMode: parsed.heightBottomMode === 'separate' ? 'separate' : 'shared',
+    bottomNotes: parsed.bottomNotes ? String(parsed.bottomNotes).trim() : '',
+    confidence: parsed.confidence || '',
+    notes: parsed.notes || ''
+  };
+  if (!result.outerTrimBox && !result.openingMidlineBox && !result.visibleOpeningBox && !result.headerOuterBox && result.doorBottomY === null) {
+    return null;
+  }
+  return result;
+}
+
+async function detectDimensionBoxes(primaryBuffer, primaryFileID, size, job) {
+  if (!primaryBuffer || !size || !size.width || !size.height) {
+    return null;
+  }
+  const dimensionData = buildDimensionAnnotationData(job);
+  const requestedText = dimensionData.provided.length
+    ? dimensionData.provided.map((field) => field.label).join('、')
+    : '未填写结构化尺寸项';
+  const response = await openai.responses.create(getVisionResponseRequest([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: [
+              '你只做尺寸标注边界定位，不生成图片。',
+              `图片尺寸 width=${size.width}, height=${size.height}。`,
+              `门类型：${dimensionData.doorType}。图面方向：${dimensionData.viewSideLabel}。`,
+              `客户需要标注的尺寸项：${requestedText}。`,
+              '请识别这些尺寸线应贴合的关键边界，并只返回 JSON。',
+              'JSON 格式：{"outerTrimBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"openingMidlineBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"visibleOpeningBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"headerOuterBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"transomTopY":整数或null,"doorBottomY":整数,"heightBottomMode":"shared|separate","bottomNotes":"...","confidence":"high|medium|low","notes":"..."}。',
+              'outerTrimBox 是含包边外沿/最外侧门套包边的整体矩形。',
+              'openingMidlineBox 是门洞尺寸使用的边界：如果同时有门洞和见光，取包边厚度中线/半包边位置；如果只有门洞没有见光，取不含包边的净开口/可见洞口边界。',
+              'visibleOpeningBox 是见光尺寸使用的净可见开口边界，不含包边。',
+              '边界必须来自真实实体结构线：门套外沿、门洞内沿、门扇/门框交界、门头门柱外沿。不要把投影、渐变阴影、地面接触阴影、背景灰边、光晕、压缩噪点识别成门边界；如果阴影贴着门边，取阴影内侧的真实硬边。',
+              'doorBottomY 是门体最下沿/门底统一下边界。你必须自己判断高度尺寸是否共用底部：如果底部没有下槛、台阶、门洞落差或其他额外部件，heightBottomMode 写 shared，含包边高、门洞高、见光高都应使用同一个 doorBottomY；只有实际可见底部结构导致不同高度必须落到不同底边时，才写 separate，并在 bottomNotes 说明原因。',
+              'transomTopY 是气窗最上沿，用于含气窗高；没有气窗时填 null。',
+              'headerOuterBox 是门+门头+门柱的整体最外矩形，用于含门头宽/含门头高；没有门头门柱时填 null。',
+              '只返回 JSON，不要解释，不要 markdown。'
+            ].join('\n')
+          },
+          {
+            type: 'input_image',
+            image_url: toDataUrl(primaryBuffer, primaryFileID)
+          }
+        ]
+      }
+    ]));
+  return normalizeDimensionBoxes(extractJsonObject(response.output_text || ''), size);
+}
+
 async function detectReferenceStyle(referenceImage, referenceBuffer, job) {
   const targetColorCode = referenceImage && referenceImage.slotId === 'color-sample'
     ? extractColorReferenceCode(job)
@@ -1989,7 +2074,37 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
   )).join('\n');
 }
 
-function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
+function formatDimensionBox(box) {
+  if (!box) {
+    return '';
+  }
+  return `left=${box.left}, top=${box.top}, right=${box.right}, bottom=${box.bottom}`;
+}
+
+function buildDimensionBoxInstruction(dimensionBoxes) {
+  if (!dimensionBoxes) {
+    return '';
+  }
+  return [
+    '系统已预先识别尺寸标注关键边界坐标，坐标基于第一张整门图原始像素；生成尺寸线时必须优先贴合这些坐标，不要只凭视觉自由估计。',
+    '这些坐标只认真实实体结构线，不能把投影、渐变阴影、地面接触阴影、背景灰边、光晕或压缩噪点当成门边界；如果阴影贴边，尺寸线贴阴影内侧的真实硬边。',
+    '宽度尺寸使用对应边界框的 left/right；高度尺寸主要使用对应边界框的 top，底部必须按 heightBottomMode 和 doorBottomY 判断。',
+    dimensionBoxes.outerTrimBox ? `含包边外沿 outerTrimBox：${formatDimensionBox(dimensionBoxes.outerTrimBox)}。含包边宽使用 left/right，含包边高使用 top；底部不要机械使用 outerTrimBox.bottom。` : '',
+    dimensionBoxes.openingMidlineBox ? `门洞边界 openingMidlineBox：${formatDimensionBox(dimensionBoxes.openingMidlineBox)}。门洞宽使用 left/right，门洞高使用 top；底部不要机械使用 openingMidlineBox.bottom。` : '',
+    dimensionBoxes.visibleOpeningBox ? `见光净开口 visibleOpeningBox：${formatDimensionBox(dimensionBoxes.visibleOpeningBox)}。见光宽使用 left/right，见光高使用 top；底部不要机械使用 visibleOpeningBox.bottom。` : '',
+    dimensionBoxes.headerOuterBox ? `含门头整体外沿 headerOuterBox：${formatDimensionBox(dimensionBoxes.headerOuterBox)}。含门头宽/高应贴这组门+门头+门柱整体外边界；含门头高可以使用 headerOuterBox.bottom。` : '',
+    dimensionBoxes.transomTopY !== null && dimensionBoxes.transomTopY !== undefined ? `气窗最上沿 transomTopY=${dimensionBoxes.transomTopY}。含气窗高应从这个 y 标到门底。` : '',
+    dimensionBoxes.doorBottomY !== null && dimensionBoxes.doorBottomY !== undefined ? `门底统一下边界 doorBottomY=${dimensionBoxes.doorBottomY}。heightBottomMode=${dimensionBoxes.heightBottomMode || 'shared'}。` : '',
+    dimensionBoxes.heightBottomMode === 'separate'
+      ? 'AI 识别到底部有真实结构差异，可以让个别高度使用不同底边，但必须只用于确实有下槛、台阶、门洞落差或额外底部部件的尺寸；不要因为 outerTrimBox/openingMidlineBox/visibleOpeningBox 的 bottom 不同就画三条底边。'
+      : 'AI 判断高度底部共用：含包边高、门洞高、见光高、含气窗高应共用 doorBottomY 作为底部，不要画出三条不同的底部横线。',
+    dimensionBoxes.bottomNotes ? `底部判断备注：${dimensionBoxes.bottomNotes}。` : '',
+    dimensionBoxes.confidence ? `边界识别置信度：${dimensionBoxes.confidence}。` : '',
+    dimensionBoxes.notes ? `边界识别备注：${dimensionBoxes.notes}。` : ''
+  ].filter(Boolean).join('\n');
+}
+
+function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, dimensionBoxes) {
   const requirementText = job && job.requirement ? String(job.requirement) : '';
   const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
   const doorType = job && job.doorType ? String(job.doorType) : '';
@@ -2664,6 +2779,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
           ? '正面图见光尺寸取线规则：客户未要求标注门洞尺寸但要求标注见光尺寸时，见光宽按不包含门洞洞口外扩部分的可见范围取线；见光高的下边界取门底，见光高的上边界取净可见开口上边界；此时不要再额外画门洞尺寸线。'
           : '')
     : '';
+  const dimensionBoxInstruction = isDimensionAnnotationTask ? buildDimensionBoxInstruction(dimensionBoxes) : '';
   const dimensionAnnotationInstruction = isDimensionAnnotationTask
     ? [
         '尺寸标注任务：本次用途是“尺寸标注图”，输出应是在第一张整门照上叠加清晰、工整、可读的尺寸辅助线、箭头、引线和文字标注。',
@@ -2672,6 +2788,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles) {
         dimensionAnnotationData.viewSide === 'back'
           ? '背面图标注规则：以客户从背面看到的左右为准；只标注客户在结构化输入里选择/填写的尺寸项。未出现在可选输入项里的五金、合页和玻璃类尺寸不要主动标注。'
           : '正面图标注规则：以客户从正面看到的左右为准；只标注客户在结构化输入里选择/填写的尺寸项。未出现在可选输入项里的五金、合页和玻璃类尺寸不要主动标注。',
+        dimensionBoxInstruction,
         frontDimensionSpanInstruction,
         '墙体厚度标注规则：如果客户填写墙体厚度，不要画尺寸线；只在画面右下角空白处单独写两行文字，格式必须为“墙体厚度：”换行“xxxmm”。',
         '含气窗高取线规则：从气窗最上沿标到门的最下沿，包含气窗和门体整体高度；不要标气窗自身净高。',
@@ -2929,9 +3046,25 @@ async function buildEditArtifacts(job) {
   let handleStyle = null;
   let directCompositeBuffer = null;
   let directCompositePlacement = null;
+  let dimensionBoxes = null;
   const referenceStyles = [];
   const detectableReferenceSlotIds = getDetectableReferenceSlotIds();
   const hasMultiPartReference = effectiveReferenceImages.some((item) => item && detectableReferenceSlotIds.includes(item.slotId));
+  if (normalizeTaskType(job) === 'dimension-annotation') {
+    try {
+      dimensionBoxes = await detectDimensionBoxes(
+        primaryBuffer,
+        primaryImage.originalImageFileID,
+        primarySize,
+        job
+      );
+    } catch (error) {
+      console.warn('[worker] vision dimension boundary detection failed', {
+        jobId: job._id || job.jobId,
+        message: error && error.message ? error.message : error
+      });
+    }
+  }
   if (handleDetail) {
     try {
       handleStyle = await detectHandleStyle(
@@ -3138,7 +3271,8 @@ async function buildEditArtifacts(job) {
       placement: directCompositePlacement
     } : null,
     handleStyle,
-    referenceStyles
+    referenceStyles,
+    dimensionBoxes
   });
 
   return {
@@ -3148,6 +3282,7 @@ async function buildEditArtifacts(job) {
     detectionMode,
     handleStyle,
     referenceStyles,
+    dimensionBoxes,
     directCompositeBuffer,
     directCompositePlacement
   };
@@ -3279,7 +3414,8 @@ async function processJob(jobId) {
     job,
     editArtifacts.maskBox,
     editArtifacts.handleStyle,
-    editArtifacts.referenceStyles
+    editArtifacts.referenceStyles,
+    editArtifacts.dimensionBoxes
   );
   console.log('[worker] built prompt', {
     jobId,
@@ -3306,6 +3442,7 @@ async function processJob(jobId) {
     detectionMode: editArtifacts.detectionMode,
     maskBox: editArtifacts.maskBox,
     handleStyle: editArtifacts.handleStyle,
+    dimensionBoxes: editArtifacts.dimensionBoxes,
     referenceStyles: editArtifacts.referenceStyles
   });
   let resultBuffer = editArtifacts.directCompositeBuffer || null;
