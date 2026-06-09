@@ -4,7 +4,8 @@
   "private": true,
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "validate:domain": "node scripts/validate-domain.js"
   },
   "dependencies": {
     "@cloudbase/node-sdk": "latest",

@@ -4,6 +4,9 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const cloudbase = require('@cloudbase/node-sdk');
 const openaiModule = require('openai');
+const { createJob: createStructuredJob, runJob: runStructuredJob } = require('./jobs/jobController');
+const { getArtifact } = require('./jobs/artifactService');
+const { TaskType } = require('./door/schema');
 let sharp = null;
 try {
   sharp = require('sharp');
@@ -25,6 +28,7 @@ const OPENAI_IMAGE_TIMEOUT_MS = Number(process.env.OPENAI_IMAGE_TIMEOUT_MS || OP
 const CLOUDBASE_TIMEOUT_MS = Number(process.env.CLOUDBASE_TIMEOUT_MS || 60000);
 const CLOUDBASE_UPLOAD_TIMEOUT_MS = Number(process.env.CLOUDBASE_UPLOAD_TIMEOUT_MS || 90000);
 const ENABLE_DIRECT_BACKGROUND_COMPOSITE = process.env.ENABLE_DIRECT_BACKGROUND_COMPOSITE === 'true';
+const USE_NEW_DIMENSION_PIPELINE = process.env.USE_NEW_DIMENSION_PIPELINE === 'true';
 const WORKER_SHARED_SECRET = process.env.WORKER_SHARED_SECRET;
 const PORT = Number(process.env.PORT || 3000);
 
@@ -2985,6 +2989,108 @@ async function uploadResult(jobId, version, buffer) {
   return result.fileID;
 }
 
+function shouldUseNewDimensionPipeline(job) {
+  return USE_NEW_DIMENSION_PIPELINE && normalizeTaskType(job) === TaskType.DIMENSION_ANNOTATION;
+}
+
+function getSourceImageFileID(job) {
+  const primaryImage = getPrimaryReferenceImage(job);
+  return (primaryImage && primaryImage.originalImageFileID) ||
+    job.primaryImageFileID ||
+    job.originalImageFileID ||
+    '';
+}
+
+function getResultBufferArtifact(jobView) {
+  const artifacts = jobView && jobView.result && Array.isArray(jobView.result.artifacts)
+    ? jobView.result.artifacts
+    : [];
+  const resultBufferRef = artifacts.find((artifact) => artifact && artifact.type === 'resultBuffer');
+  if (!resultBufferRef) {
+    return null;
+  }
+  return getArtifact(resultBufferRef.artifactId);
+}
+
+async function processDimensionAnnotationJobWithNewPipeline(jobId, job) {
+  const sourceImageFileID = getSourceImageFileID(job);
+  if (!sourceImageFileID) {
+    throw new Error('缺少原始图片');
+  }
+
+  await updateJob(jobId, {
+    status: 'processing',
+    provider: 'structured-worker',
+    providerStatus: 'processing',
+    errorMessage: '',
+    updatedAt: Date.now()
+  });
+
+  const sourceBuffer = await downloadOriginalImage(sourceImageFileID);
+  const imageSize = getImageSize(sourceBuffer, sourceImageFileID);
+  const structuredJob = createStructuredJob({
+    taskType: TaskType.DIMENSION_ANNOTATION,
+    doorType: job.doorType,
+    viewSide: job.dimensionViewSide || job.viewSide,
+    inputs: getDimensionInputMap(job),
+    image: sourceBuffer,
+    imageSize,
+    whiteBackground: typeof job.whiteBackground === 'boolean'
+      ? job.whiteBackground
+      : job.dimensionWhiteBackground,
+    metadata: {
+      legacyJobId: jobId,
+      sourceImageFileID
+    }
+  });
+
+  const structuredResult = await runStructuredJob(structuredJob.jobId);
+  if (structuredResult.status !== 'succeeded') {
+    await updateJob(jobId, {
+      status: 'failed',
+      provider: 'structured-worker',
+      providerStatus: structuredResult.status,
+      errorMessage: structuredResult.error && structuredResult.error.message
+        ? structuredResult.error.message
+        : '尺寸标注结构化流程失败',
+      structuredPipelineJobId: structuredJob.jobId,
+      structuredPipelineStatus: structuredResult.status,
+      structuredPipelineError: structuredResult.error || null,
+      needsManualReview: structuredResult.status === 'needs_user_adjustment',
+      updatedAt: Date.now()
+    });
+    return;
+  }
+
+  const resultBufferArtifact = getResultBufferArtifact(structuredResult);
+  const resultBuffer = resultBufferArtifact && resultBufferArtifact.value;
+  if (!Buffer.isBuffer(resultBuffer)) {
+    throw new Error('尺寸标注结构化流程未生成可上传图片');
+  }
+
+  const resultImageFileID = await uploadResult(jobId, job.version || 1, resultBuffer);
+  const time = Date.now();
+  const nextVersions = (job.versions || []).concat({
+    resultImageFileID,
+    text: job.requirement || '尺寸标注图',
+    time,
+    imageUrl: ''
+  });
+
+  await updateJob(jobId, {
+    status: 'success',
+    provider: 'structured-worker',
+    providerStatus: 'success',
+    resultImageFileID,
+    errorMessage: '',
+    structuredPipelineJobId: structuredJob.jobId,
+    structuredPipelineStatus: structuredResult.status,
+    structuredPipelineMetadata: structuredResult.metadata || {},
+    updatedAt: time,
+    versions: nextVersions
+  });
+}
+
 async function createInputImage(fileID, sourceBuffer, fallbackName) {
   const extension = getFileExtensionFromPath(fileID, 'png');
   return toFile(sourceBuffer, fallbackName || `door-source.${extension}`, {
@@ -3393,6 +3499,16 @@ async function processJob(jobId) {
     throw new Error('缺少原始图片');
   }
 
+  if (shouldUseNewDimensionPipeline(job)) {
+    console.log('[worker] using structured dimension pipeline', {
+      jobId,
+      featureFlag: 'USE_NEW_DIMENSION_PIPELINE'
+    });
+    await processDimensionAnnotationJobWithNewPipeline(jobId, job);
+    console.log('[worker] completed structured dimension job', jobId);
+    return;
+  }
+
   await updateJob(jobId, {
     status: 'processing',
     provider: 'openai-worker',
@@ -3521,7 +3637,10 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 200, {
       success: true,
       configured: isConfigured,
-      missingEnvKeys
+      missingEnvKeys,
+      featureFlags: {
+        useNewDimensionPipeline: USE_NEW_DIMENSION_PIPELINE
+      }
     });
     return;
   }
