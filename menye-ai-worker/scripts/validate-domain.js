@@ -429,6 +429,45 @@ assert.strictEqual(hybridAnalyzedDoor.boxes.opening.top, 22);
 assert.strictEqual(hybridAnalyzedDoor.boxes.visibleOpening.left, 32);
 assert(hybridAnalyzedDoor.notes.includes('ai-assisted'));
 
+const nonBlockingAdjustmentAiClient = {
+  responses: {
+    create: async () => ({
+      output_text: JSON.stringify({
+        doorType: 'single',
+        viewSide: 'front',
+        boxes: {
+          outerTrim: { left: 18, top: 8, right: 102, bottom: 156 },
+          opening: { left: 27, top: 22, right: 93, bottom: 154 },
+          visibleOpening: { left: 32, top: 30, right: 88, bottom: 154 },
+          doorLeaf: { left: 35, top: 34, right: 85, bottom: 154 },
+          handle: null,
+          lock: null,
+          transom: null,
+          header: { left: 18, top: 8, right: 102, bottom: 156 },
+          shadowRegions: []
+        },
+        keypoints: { doorBottomY: 154 },
+        modes: { heightBottomMode: 'separate' },
+        confidence: { overall: 'high', opening: 'high', visibleOpening: 'high', outerTrim: 'high', doorLeaf: 'high' },
+        needsUserAdjustment: true,
+        notes: 'non-critical adjustment requested'
+      })
+    })
+  }
+};
+const nonBlockingAdjustmentDoor = await analyzeDoor({
+  image: hybridAnalyzerImage,
+  imageSize: { width: 120, height: 160 },
+  doorType: 'single',
+  viewSide: 'front',
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  mode: 'hybrid',
+  client: nonBlockingAdjustmentAiClient
+});
+assert.strictEqual(nonBlockingAdjustmentDoor.needsUserAdjustment, false);
+assert.strictEqual(nonBlockingAdjustmentDoor.modes.heightBottomMode, 'shared');
+assert(nonBlockingAdjustmentDoor.notes.includes('non-blocking analyzer adjustment cleared'));
+
 const invalidAiClient = {
   responses: {
     create: async () => ({

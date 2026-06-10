@@ -349,12 +349,19 @@ function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context 
   const useHeuristicBottom = hasNumber(aiBottom) &&
     hasNumber(heuristicBottom) &&
     Math.abs(aiBottom - heuristicBottom) > Math.max(24, imageHeight * 0.04);
+  const restoreSharedHeightMode = aiStructure.modes &&
+    aiStructure.modes.heightBottomMode === 'separate' &&
+    heuristicStructure.modes &&
+    heuristicStructure.modes.heightBottomMode === 'shared';
 
-  if (!notes.length && !useHeuristicBottom) {
+  if (!notes.length && !useHeuristicBottom && !restoreSharedHeightMode) {
     return aiStructure;
   }
   if (useHeuristicBottom) {
     notes.push('doorBottomY restored from heuristic guard');
+  }
+  if (restoreSharedHeightMode) {
+    notes.push('heightBottomMode restored to shared from heuristic guard');
   }
 
   return normalizeDoorStructure({
@@ -364,7 +371,9 @@ function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context 
     keypoints: {
       doorBottomY: useHeuristicBottom ? heuristicBottom : aiBottom
     },
-    modes: aiStructure.modes,
+    modes: {
+      heightBottomMode: restoreSharedHeightMode ? 'shared' : (aiStructure.modes && aiStructure.modes.heightBottomMode)
+    },
     confidence: {
       ...(aiStructure.confidence || {}),
       guard: notes.length ? 'applied' : 'not_applied'
@@ -374,6 +383,30 @@ function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context 
   }, {
     doorType: aiStructure.doorType,
     viewSide: aiStructure.viewSide
+  });
+}
+
+function hasLowCriticalConfidence(doorStructure) {
+  const confidence = doorStructure && doorStructure.confidence ? doorStructure.confidence : {};
+  return ['overall', 'outerTrim', 'opening', 'visibleOpening', 'doorLeaf'].some((key) => {
+    const value = String(confidence[key] || '').toLowerCase();
+    return value === 'low' || value.includes('low');
+  });
+}
+
+function markAnalyzerReady(doorStructure, notes) {
+  return normalizeDoorStructure({
+    doorType: doorStructure.doorType,
+    viewSide: doorStructure.viewSide,
+    boxes: doorStructure.boxes,
+    keypoints: doorStructure.keypoints,
+    modes: doorStructure.modes,
+    confidence: doorStructure.confidence,
+    needsUserAdjustment: false,
+    notes
+  }, {
+    doorType: doorStructure.doorType,
+    viewSide: doorStructure.viewSide
   });
 }
 
@@ -1229,10 +1262,16 @@ async function analyzeDoor({ image, imageUrl, imageSize, doorType, viewSide, tas
       });
       const aiStructure = mergeAiStructureWithHeuristic(rawAiStructure, heuristicStructure, { imageSize });
       const aiIssues = getStructureQualityIssues(aiStructure, { imageSize });
-      if (!aiStructure.needsUserAdjustment && aiIssues.length === 0) {
+      if (aiIssues.length === 0 && !hasLowCriticalConfidence(aiStructure)) {
+        const usableAiStructure = aiStructure.needsUserAdjustment
+          ? markAnalyzerReady(
+            aiStructure,
+            mergeAnalyzerNotes(aiStructure, heuristicStructure, 'non-blocking analyzer adjustment cleared after geometry validation')
+          )
+          : aiStructure;
         return withAnalyzerNote(
-          aiStructure,
-          mergeAnalyzerNotes(aiStructure, heuristicStructure, 'ai-assisted door structure')
+          usableAiStructure,
+          mergeAnalyzerNotes(usableAiStructure, heuristicStructure, 'ai-assisted door structure')
         );
       }
       const heuristicIssues = getStructureQualityIssues(heuristicStructure, { imageSize });
