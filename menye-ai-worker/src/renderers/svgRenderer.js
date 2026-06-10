@@ -26,8 +26,12 @@ function renderMultilineText(text, x, y, options = {}) {
   const anchor = options.anchor || 'start';
   const baseline = options.baseline || 'middle';
   const lineHeight = Number(options.lineHeight) || 28;
+  const rotation = Number(options.rotation);
+  const transform = Number.isFinite(rotation) && rotation !== 0
+    ? ` transform="rotate(${rotation} ${x} ${y})"`
+    : '';
   return [
-    `<text x="${x}" y="${y}" text-anchor="${anchor}" dominant-baseline="${baseline}" class="${options.className || 'dimension-text'}">`,
+    `<text x="${x}" y="${y}" text-anchor="${anchor}" dominant-baseline="${baseline}" class="${options.className || 'dimension-text'}"${transform}>`,
     lines.map((line, index) => {
       const dy = index === 0 ? 0 : lineHeight;
       return `<tspan x="${x}" dy="${dy}">${escapeXml(line)}</tspan>`;
@@ -38,6 +42,10 @@ function renderMultilineText(text, x, y, options = {}) {
 
 function renderLine(line) {
   return `<line id="${escapeXml(line.id)}" x1="${line.from.x}" y1="${line.from.y}" x2="${line.to.x}" y2="${line.to.y}" class="dimension-line" marker-start="url(#arrow)" marker-end="url(#arrow)" />`;
+}
+
+function renderExtensionLine(line) {
+  return `<line id="${escapeXml(line.id)}" x1="${line.from.x}" y1="${line.from.y}" x2="${line.to.x}" y2="${line.to.y}" class="dimension-extension-line" />`;
 }
 
 function renderText(text) {
@@ -54,7 +62,8 @@ function renderText(text) {
   return renderMultilineText(text.text, text.position.x, text.position.y, {
     anchor,
     baseline,
-    className: 'dimension-text'
+    className: 'dimension-text',
+    rotation: text.rotation || 0
   });
 }
 
@@ -70,6 +79,7 @@ function renderTextOnly(annotation) {
 function renderDimensionSvgOverlay(renderPlan, options = {}) {
   const size = getRenderPlanSize(renderPlan);
   const lines = Array.isArray(renderPlan && renderPlan.lines) ? renderPlan.lines : [];
+  const extensionLines = Array.isArray(renderPlan && renderPlan.extensionLines) ? renderPlan.extensionLines : [];
   const texts = Array.isArray(renderPlan && renderPlan.texts) ? renderPlan.texts : [];
   const textOnlyAnnotations = Array.isArray(renderPlan && renderPlan.textOnlyAnnotations)
     ? renderPlan.textOnlyAnnotations
@@ -86,12 +96,16 @@ function renderDimensionSvgOverlay(renderPlan, options = {}) {
     '</marker>',
     '<style>',
     '.dimension-line{stroke:#111;stroke-width:2;fill:none;shape-rendering:crispEdges;}',
+    '.dimension-extension-line{stroke:#111;stroke-width:1.5;fill:none;shape-rendering:crispEdges;}',
     '.dimension-text,.dimension-text-only{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:24px;font-weight:500;fill:#111;}',
     '.dimension-text{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round;}',
     '.dimension-text-only{font-size:26px;}',
     '</style>',
     '</defs>',
     background,
+    '<g id="dimension-extension-lines">',
+    extensionLines.map(renderExtensionLine).join(''),
+    '</g>',
     '<g id="dimension-lines">',
     lines.map(renderLine).join(''),
     '</g>',

@@ -71,7 +71,9 @@ async function runDimensionAnnotationPipeline(job = {}) {
   }
 
   const doorStructure = await analyzeDoor({
+    image: normalizedJob.image,
     imageUrl: normalizedJob.imageUrl,
+    imageSize: normalizedJob.imageSize,
     doorType: normalizedJob.doorType,
     viewSide: normalizedJob.viewSide,
     taskType: normalizedJob.taskType,
@@ -128,7 +130,8 @@ async function runDimensionAnnotationPipeline(job = {}) {
       ? renderResult.metadata.whiteBackground
       : normalizedJob.whiteBackground,
     heightBottomMode: doorStructure.modes && doorStructure.modes.heightBottomMode,
-    rendererType: renderResult.rendererType
+    rendererType: renderResult.rendererType,
+    renderMetadata: renderResult.metadata || null
   });
 
   const validation = validateDimensionAnnotation({

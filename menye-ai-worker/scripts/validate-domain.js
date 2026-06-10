@@ -324,6 +324,20 @@ for (const rule of sharedHeightRules.rules) {
   assert.strictEqual(rule.constraints.sharedBottomY, 950);
 }
 
+const headerHeightRule = buildDimensionRules({
+  doorType: 'single',
+  viewSide: 'front',
+  inputs: {
+    headerHeight: '2600'
+  },
+  doorStructure: mockDoorStructure
+});
+assert.strictEqual(headerHeightRule.status, JobStatus.RULES_READY);
+assert.strictEqual(headerHeightRule.rules[0].field, 'headerHeight');
+assert.strictEqual(headerHeightRule.rules[0].sourceBoundary.box, 'header');
+assert.strictEqual(headerHeightRule.rules[0].sourceBoundary.to.key, 'doorBottomY');
+assert.strictEqual(headerHeightRule.rules[0].sourceBoundary.to.value, 950);
+
 const shadowCheck = buildDimensionRules({
   doorType: 'single',
   viewSide: 'front',
@@ -439,6 +453,8 @@ assert.strictEqual(openingWidthPlan.lines.length, 1);
 assert.strictEqual(openingWidthPlan.texts.length, 1);
 assert.strictEqual(openingWidthPlan.lines[0].field, 'openingWidth');
 assert.strictEqual(openingWidthPlan.lines[0].orientation, 'horizontal');
+assert(openingWidthPlan.lines[0].from.y < analyzedDoor.boxes.outerTrim.top);
+assert.strictEqual(openingWidthPlan.extensionLines.length, 2);
 assert(openingWidthPlan.texts[0].text.includes('980mm'));
 
 const twoWidthRules = buildDimensionRules({
@@ -458,6 +474,8 @@ const twoWidthPlan = buildDimensionRenderPlan({
 assert.strictEqual(twoWidthPlan.lines.length, 2);
 assert.notDeepStrictEqual(twoWidthPlan.lines[0].from, twoWidthPlan.lines[1].from);
 assert.notStrictEqual(twoWidthPlan.lines[0].from.y, twoWidthPlan.lines[1].from.y);
+assert.strictEqual(twoWidthPlan.extensionLines.length, 4);
+assert(twoWidthPlan.lines.every((line) => line.from.y < analyzedDoor.boxes.outerTrim.top));
 
 const wallPlan = buildDimensionRenderPlan({
   rules: wallOnly.rules,
@@ -480,6 +498,8 @@ const sharedBottomYValues = new Set(sharedHeightPlan.lines.map((line) => line.to
 assert.strictEqual(sharedBottomYValues.size, 1);
 assert.strictEqual([...sharedBottomYValues][0], analyzedDoor.keypoints.doorBottomY);
 assert.strictEqual(new Set(sharedHeightPlan.lines.map((line) => line.from.x)).size, 3);
+assert.strictEqual(sharedHeightPlan.extensionLines.length, 6);
+assert(sharedHeightPlan.texts.every((text) => text.rotation === -90));
 
 for (const text of openingWidthPlan.texts.concat(twoWidthPlan.texts).concat(sharedHeightPlan.texts)) {
   assert(text.text.includes('mm'), `render text missing mm: ${text.text}`);

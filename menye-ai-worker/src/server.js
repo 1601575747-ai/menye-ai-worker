@@ -132,44 +132,11 @@ const COMMON_DIMENSION_FIELDS = [
 
 const DOOR_TYPE_DIMENSION_FIELDS = {
   '单开门': [],
-  '双开门': [
-    { key: 'totalLeafWidth', label: '双扇总宽', annotationLabel: '双扇总宽', unit: 'mm' },
-    { key: 'leftLeafWidth', label: '左门扇宽', annotationLabel: '左扇宽', unit: 'mm' },
-    { key: 'rightLeafWidth', label: '右门扇宽', annotationLabel: '右扇宽', unit: 'mm' },
-    { key: 'middleGapWidth', label: '中缝宽', annotationLabel: '中缝宽', unit: 'mm' },
-    { key: 'doubleHandleSpacing', label: '双把手中心距', annotationLabel: '把手中心距', unit: 'mm' }
-  ],
-  '子母门': [
-    { key: 'motherLeafWidth', label: '母门扇宽', annotationLabel: '母门宽', unit: 'mm' },
-    { key: 'childLeafWidth', label: '子门扇宽', annotationLabel: '子门宽', unit: 'mm' },
-    { key: 'totalLeafWidth', label: '子母门总宽', annotationLabel: '子母总宽', unit: 'mm' },
-    { key: 'middleGapWidth', label: '子母中缝宽', annotationLabel: '中缝宽', unit: 'mm' }
-  ],
-  '四开子母门': [
-    { key: 'totalLeafWidth', label: '四扇总宽', annotationLabel: '四扇总宽', unit: 'mm' },
-    { key: 'leftMotherLeafWidth', label: '左母门宽', annotationLabel: '左母门宽', unit: 'mm' },
-    { key: 'leftChildLeafWidth', label: '左子门宽', annotationLabel: '左子门宽', unit: 'mm' },
-    { key: 'rightMotherLeafWidth', label: '右母门宽', annotationLabel: '右母门宽', unit: 'mm' },
-    { key: 'rightChildLeafWidth', label: '右子门宽', annotationLabel: '右子门宽', unit: 'mm' },
-    { key: 'middleGapWidth', label: '中缝宽', annotationLabel: '中缝宽', unit: 'mm' }
-  ],
-  '四开平分门': [
-    { key: 'totalLeafWidth', label: '四扇总宽', annotationLabel: '四扇总宽', unit: 'mm' },
-    { key: 'singleLeafWidth', label: '单扇宽', annotationLabel: '单扇宽', unit: 'mm' },
-    { key: 'leftOuterLeafWidth', label: '左外扇宽', annotationLabel: '左外扇宽', unit: 'mm' },
-    { key: 'leftInnerLeafWidth', label: '左内扇宽', annotationLabel: '左内扇宽', unit: 'mm' },
-    { key: 'rightInnerLeafWidth', label: '右内扇宽', annotationLabel: '右内扇宽', unit: 'mm' },
-    { key: 'rightOuterLeafWidth', label: '右外扇宽', annotationLabel: '右外扇宽', unit: 'mm' },
-    { key: 'middleGapWidth', label: '中缝宽', annotationLabel: '中缝宽', unit: 'mm' }
-  ],
-  '六开门': [
-    { key: 'totalLeafWidth', label: '六扇总宽', annotationLabel: '六扇总宽', unit: 'mm' },
-    { key: 'singleLeafWidth', label: '单扇宽', annotationLabel: '单扇宽', unit: 'mm' },
-    { key: 'leftGroupWidth', label: '左组三扇宽', annotationLabel: '左组三扇宽', unit: 'mm' },
-    { key: 'rightGroupWidth', label: '右组三扇宽', annotationLabel: '右组三扇宽', unit: 'mm' },
-    { key: 'middleGapWidth', label: '中缝宽', annotationLabel: '中缝宽', unit: 'mm' },
-    { key: 'leafGapWidth', label: '门扇缝宽', annotationLabel: '门扇缝宽', unit: 'mm' }
-  ]
+  '双开门': [],
+  '子母门': [],
+  '四开子母门': [],
+  '四开平分门': [],
+  '六开门': []
 };
 
 function normalizeDimensionDoorType(value) {
@@ -197,16 +164,9 @@ function normalizeDimensionDoorType(value) {
 
 function getDimensionFieldOptions(doorType, viewSide) {
   const normalizedDoorType = normalizeDimensionDoorType(doorType);
-  const normalizedViewSide = viewSide === 'back' ? 'back' : 'front';
-  const sideFields = normalizedViewSide === 'back'
-    ? [
-        { key: 'hingeSideGap', label: '合页侧边距', annotationLabel: '合页侧边距', unit: 'mm' }
-      ]
-    : [];
   const seen = new Set();
   return COMMON_DIMENSION_FIELDS
     .concat(DOOR_TYPE_DIMENSION_FIELDS[normalizedDoorType] || [])
-    .concat(sideFields)
     .filter((field) => {
       if (!field || !field.key || seen.has(field.key)) {
         return false;
@@ -369,7 +329,18 @@ function verifySignature(body) {
 }
 
 function getReferenceImages(job) {
-  return Array.isArray(job.referenceImages) ? job.referenceImages.filter((item) => item && item.originalImageFileID) : [];
+  return Array.isArray(job.referenceImages)
+    ? job.referenceImages
+      .filter((item) => item && (item.originalImageFileID || item.uploadedRef))
+      .map((item) => {
+        const fileID = item.originalImageFileID || item.uploadedRef;
+        return {
+          ...item,
+          originalImageFileID: fileID,
+          uploadedRef: item.uploadedRef || fileID
+        };
+      })
+    : [];
 }
 
 function getPrimaryReferenceImage(job) {
@@ -380,6 +351,11 @@ function getPrimaryReferenceImage(job) {
 function getHandleDetailImage(job) {
   const referenceImages = getReferenceImages(job);
   return referenceImages.find((item) => item.slotId === 'handle-detail') || null;
+}
+
+function getLockDetailImage(job) {
+  const referenceImages = getReferenceImages(job);
+  return referenceImages.find((item) => item.slotId === 'lock-detail') || null;
 }
 
 function getBackgroundReferenceImage(job) {
@@ -1694,6 +1670,25 @@ function inferHandleMaskBox(size, handleBuffer, job) {
   }, size, isDoubleDoor ? 'door-type-center-heuristic' : 'door-type-side-heuristic');
 }
 
+function inferLockMaskBox(size, lockBuffer, job) {
+  if (!size || !size.width || !size.height) {
+    return null;
+  }
+  const isDoubleDoor = /双开|子母|四开|六开/.test(job && job.doorType || '');
+  const boxWidthRatio = isDoubleDoor ? 0.28 : 0.22;
+  const boxHeightRatio = lockBuffer && lockBuffer.length ? 0.42 : 0.34;
+  const boxWidth = Math.max(Math.round(size.width * boxWidthRatio), isDoubleDoor ? 220 : 160);
+  const boxHeight = Math.max(Math.round(size.height * boxHeightRatio), 280);
+  const centerX = isDoubleDoor ? size.width * 0.5 : size.width * 0.72;
+  const centerY = size.height * 0.58;
+  return normalizeMaskBox({
+    left: centerX - (boxWidth / 2),
+    top: centerY - (boxHeight / 2),
+    right: centerX + (boxWidth / 2),
+    bottom: centerY + (boxHeight / 2)
+  }, size, isDoubleDoor ? 'lock-center-heuristic' : 'lock-side-heuristic');
+}
+
 function sampleBoxToMaskBox(sampleBox, size, source) {
   const normalized = normalizeSampleBox(sampleBox);
   if (!normalized || !size || !size.width || !size.height) {
@@ -1818,6 +1813,46 @@ async function detectHandleMaskBox(primaryBuffer, primaryFileID, handleBuffer, h
   const text = response.output_text || '';
   const parsed = extractJsonObject(text);
   return normalizeMaskBox(parsed, size, 'vision-detected');
+}
+
+async function detectLockMaskBox(primaryBuffer, primaryFileID, lockBuffer, lockFileID, size, job) {
+  if (!primaryBuffer || !lockBuffer || !size) {
+    return null;
+  }
+  const response = await openai.responses.create(getVisionResponseRequest([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: [
+              '你要定位整门照中的锁体/智能锁安装编辑区域，只做坐标定位，不生成图片。',
+              `门类型：${job && job.doorType ? job.doorType : '未指定'}`,
+              '第一张图是整门照，第二张图是要融合上去的锁体/智能锁参考图。',
+              '请在第一张整门照中找到最适合安装或替换该锁体/智能锁的位置，并返回一个局部编辑框。',
+              '编辑框必须覆盖：原锁体、旧智能锁、钥匙孔、小圆孔、猫眼/门铃、与锁体冲突的把手底座，以及放置新智能锁面板所需的必要衔接区域。',
+              '如果参考图是一体式把手智能锁，编辑框还必须覆盖整门照中原把手或新一体式把手需要占用的区域；如果是双开门，优先覆盖中缝两侧五金安装区。',
+              '如果参考图是非一体式智能锁，只框锁具面板和必要安装区，不要框完整门扇；但不能因为想保留原把手而把智能锁安装区域框得过小。',
+              '不要把门头、门柱、整扇门板、阴影、背景或装饰花纹当作锁体编辑区域。',
+              '只返回 JSON，不要返回任何额外文字。',
+              'JSON 格式必须为：{"left":整数,"top":整数,"right":整数,"bottom":整数,"confidence":"high|medium|low","notes":"..."}。',
+              `坐标基于第一张图原始尺寸 width=${size.width}, height=${size.height}。`,
+              '如果第一张整门照中没有明显锁具，也要根据门型、门缝、把手位置和参考图比例给出最合理的智能锁安装局部区域。'
+            ].join('\n')
+          },
+          {
+            type: 'input_image',
+            image_url: toDataUrl(primaryBuffer, primaryFileID)
+          },
+          {
+            type: 'input_image',
+            image_url: toDataUrl(lockBuffer, lockFileID)
+          }
+        ]
+      }
+    ]));
+  const parsed = extractJsonObject(response.output_text || '');
+  return normalizeMaskBox(parsed, size, parsed && parsed.confidence ? `lock-vision-${parsed.confidence}` : 'lock-vision-detected');
 }
 
 async function detectDoorPlacement(primaryBuffer, primaryFileID, backgroundBuffer, backgroundFileID, primarySize, backgroundSize, job) {
@@ -2787,7 +2822,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
   const dimensionAnnotationInstruction = isDimensionAnnotationTask
     ? [
         '尺寸标注任务：本次用途是“尺寸标注图”，输出应是在第一张整门照上叠加清晰、工整、可读的尺寸辅助线、箭头、引线和文字标注。',
-        `尺寸标注门类：${dimensionAnnotationData.doorType}。不同门类必须按对应结构标注，例如双开门要能标左右扇和中缝，子母门要能标子门/母门，四开/六开门要能标各门扇分段。`,
+        `尺寸标注门类：${dimensionAnnotationData.doorType}。不同门类只影响门洞、见光、含包边、含气窗、含门头等统一尺寸项的取线边界，不得额外标注门扇分段、中缝或五金尺寸。`,
         `尺寸标注图面方向：${dimensionAnnotationData.viewSideLabel}。必须按这张图的实际可见面标注，不要把正面和背面的五金、合页、开启方向、左右关系混用。`,
         dimensionAnnotationData.viewSide === 'back'
           ? '背面图标注规则：以客户从背面看到的左右为准；只标注客户在结构化输入里选择/填写的尺寸项。未出现在可选输入项里的五金、合页和玻璃类尺寸不要主动标注。'
@@ -2803,7 +2838,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
           ? `客户已选择/填写的尺寸项：${dimensionAnnotationData.provided.map((field) => `${field.annotationLabel}${field.valueText ? `：${field.valueText}` : '：待测'}`).join('；')}。最终图必须优先标注这些项目。`
           : '客户未填写结构化尺寸数值；可以根据补充要求中的明确尺寸做标注，否则只标项目名称或“待测”。',
         '所有尺寸单位必须显示为 mm。客户输入字段只表示数字，但最终图中文字必须补上 mm，例如输入 2050 时标为 2050mm。',
-        '标注优先级：优先标注客户结构化输入的尺寸值，其次标注客户补充要求中给出的具体尺寸值；常见项目包括门洞宽、门洞高、见光宽、见光高、含包边宽、含包边高、墙体厚度、含气窗高、含门头宽、含门头高、各门扇分段宽和中缝宽。',
+        '标注优先级：优先标注客户结构化输入的尺寸值，其次标注客户补充要求中给出的具体尺寸值；只允许标注门洞宽、门洞高、见光宽、见光高、含包边宽、含包边高、墙体厚度、含气窗高、含门头宽、含门头高。',
         '严禁编造尺寸：如果客户没有提供某个具体数值，不要凭空写 900mm、2100mm 等数字；可以只标注项目名称，如“门洞宽”“含包边高”“含气窗高”，或使用“待测”提示。',
         '尺寸标注必须像施工沟通图：线条沿门洞、门扇、包边或五金对应边缘摆放，文字不要遮挡门体关键细节；标注应横平竖直、层级清楚、中文可读。',
         '尺寸标注不是重新设计门。除叠加标注线、箭头和文字外，必须保持原门、包边、把手、锁体、玻璃、背景、颜色、材质、光影和构图不变。',
@@ -3124,8 +3159,10 @@ async function buildEditArtifacts(job) {
   let inputImages = [];
   const referenceBuffers = {};
   const handleDetail = getHandleDetailImage(job);
+  const lockDetail = getLockDetailImage(job);
   const backgroundReference = getBackgroundReferenceImage(job);
   let handleBuffer = null;
+  let lockBuffer = null;
   const referenceImages = getReferenceImages(job);
   const hasHeaderColumnReference = referenceImages.some((item) => item && item.slotId === 'header-column-detail');
   const effectiveReferenceImages = hasHeaderColumnReference
@@ -3139,6 +3176,9 @@ async function buildEditArtifacts(job) {
     referenceBuffers[referenceImage.slotId || referenceImage.originalImageFileID] = referenceBuffer;
     if (handleDetail && referenceImage.slotId === handleDetail.slotId) {
       handleBuffer = referenceBuffer;
+    }
+    if (lockDetail && referenceImage.slotId === lockDetail.slotId) {
+      lockBuffer = referenceBuffer;
     }
   }
 
@@ -3156,6 +3196,10 @@ async function buildEditArtifacts(job) {
   const referenceStyles = [];
   const detectableReferenceSlotIds = getDetectableReferenceSlotIds();
   const hasMultiPartReference = effectiveReferenceImages.some((item) => item && detectableReferenceSlotIds.includes(item.slotId));
+  const effectiveDetailReferences = effectiveReferenceImages
+    .filter((item) => item && item.slotId && item.slotId !== 'full-door' && item.slotId !== 'background-reference');
+  const shouldBuildLockMask = !handleDetail && !!lockDetail && !backgroundReference &&
+    effectiveDetailReferences.length === 1 && effectiveDetailReferences[0].slotId === 'lock-detail';
   if (normalizeTaskType(job) === 'dimension-annotation') {
     try {
       dimensionBoxes = await detectDimensionBoxes(
@@ -3206,6 +3250,31 @@ async function buildEditArtifacts(job) {
       const maskBuffer = buildHandleMaskBuffer(primarySize.width, primarySize.height, maskBox);
       maskFile = await createMaskFile(maskBuffer);
       detectionMode = maskBox.source || 'heuristic';
+    }
+  }
+  if (shouldBuildLockMask) {
+    try {
+      maskBox = await detectLockMaskBox(
+        primaryBuffer,
+        primaryImage.originalImageFileID,
+        lockBuffer,
+        lockDetail.originalImageFileID,
+        primarySize,
+        job
+      );
+    } catch (error) {
+      console.warn('[worker] vision lock mask detection failed', {
+        jobId: job._id || job.jobId,
+        message: error && error.message ? error.message : error
+      });
+    }
+    if (!maskBox) {
+      maskBox = inferLockMaskBox(primarySize, lockBuffer, job);
+    }
+    if (maskBox) {
+      const maskBuffer = buildHandleMaskBuffer(primarySize.width, primarySize.height, maskBox);
+      maskFile = await createMaskFile(maskBuffer);
+      detectionMode = maskBox.source || 'lock-heuristic';
     }
   }
   for (const referenceImage of effectiveReferenceImages) {
@@ -3352,6 +3421,7 @@ async function buildEditArtifacts(job) {
   console.log('[worker] downloaded edit artifacts', job._id || job.jobId, {
     inputImageCount: inputImages.length,
     hasHandleDetail: !!handleDetail,
+    hasLockDetail: !!lockDetail,
     hasEdgeTrimDetail: effectiveReferenceImages.some((item) => item && item.slotId === 'edge-trim-detail'),
     hasHeaderColumnReference,
     ignoredEdgeTrimBecauseHeaderColumn: hasHeaderColumnReference && referenceImages.some((item) => item && item.slotId === 'edge-trim-detail'),
@@ -3536,6 +3606,7 @@ async function processJob(jobId) {
   console.log('[worker] built prompt', {
     jobId,
     hasHandleDetail: !!getHandleDetailImage(job),
+    hasLockDetail: !!getLockDetailImage(job),
     hasEdgeTrimDetail: getReferenceImages(job).some((item) => item && item.slotId === 'edge-trim-detail'),
     hasColorSample: getReferenceImages(job).some((item) => item && item.slotId === 'color-sample'),
     hasBackgroundReference: getReferenceImages(job).some((item) => item && item.slotId === 'background-reference'),

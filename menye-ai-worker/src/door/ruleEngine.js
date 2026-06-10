@@ -113,10 +113,6 @@ function buildTextOnlyRule(field, normalizedInput) {
 }
 
 function getVerticalBottom({ field, box, doorStructure, heightBottomMode }) {
-  const isHeaderHeight = field === DimensionField.HEADER_HEIGHT;
-  if (isHeaderHeight) {
-    return box.bottom;
-  }
   if (heightBottomMode === 'shared') {
     return doorStructure && doorStructure.keypoints ? doorStructure.keypoints.doorBottomY : undefined;
   }
@@ -193,7 +189,7 @@ function buildLineBoundary({ field, doorStructure }) {
       box: sourceBoxKey,
       from: Object.freeze({ key: 'top', value: top }),
       to: Object.freeze({
-        key: heightBottomMode === 'shared' && field !== DimensionField.HEADER_HEIGHT ? 'doorBottomY' : 'bottom',
+        key: heightBottomMode === 'shared' ? 'doorBottomY' : 'bottom',
         value: bottom
       })
     }),
@@ -202,7 +198,7 @@ function buildLineBoundary({ field, doorStructure }) {
       ignoreShadowRegions: true,
       shadowRegionsExcluded: Array.isArray(doorStructure && doorStructure.boxes && doorStructure.boxes.shadowRegions),
       heightBottomMode,
-      sharedBottomY: heightBottomMode === 'shared' && field !== DimensionField.HEADER_HEIGHT ? bottom : null
+      sharedBottomY: heightBottomMode === 'shared' ? bottom : null
     })
   };
 }
