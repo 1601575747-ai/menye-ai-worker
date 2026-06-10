@@ -388,6 +388,85 @@ assert.strictEqual(analyzedDoor.needsUserAdjustment, false);
 assert(analyzedDoor.confidence);
 assert.strictEqual(typeof analyzedDoor.notes, 'string');
 
+const hybridAnalyzerImage = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="160"><rect width="120" height="160" fill="#fff"/><rect x="20" y="10" width="80" height="145" fill="#555"/><rect x="30" y="25" width="60" height="125" fill="#777"/></svg>');
+const validAiClient = {
+  responses: {
+    create: async () => ({
+      output_text: JSON.stringify({
+        doorType: 'single',
+        viewSide: 'front',
+        boxes: {
+          outerTrim: { left: 18, top: 8, right: 102, bottom: 156 },
+          opening: { left: 27, top: 22, right: 93, bottom: 154 },
+          visibleOpening: { left: 32, top: 30, right: 88, bottom: 154 },
+          doorLeaf: { left: 35, top: 34, right: 85, bottom: 154 },
+          handle: null,
+          lock: null,
+          transom: null,
+          header: { left: 18, top: 8, right: 102, bottom: 156 },
+          shadowRegions: []
+        },
+        keypoints: { doorBottomY: 154 },
+        modes: { heightBottomMode: 'shared' },
+        confidence: { overall: 'high' },
+        needsUserAdjustment: false,
+        notes: 'valid ai structure'
+      })
+    })
+  }
+};
+const hybridAnalyzedDoor = await analyzeDoor({
+  image: hybridAnalyzerImage,
+  imageSize: { width: 120, height: 160 },
+  doorType: 'single',
+  viewSide: 'front',
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  mode: 'hybrid',
+  client: validAiClient
+});
+assert.strictEqual(hybridAnalyzedDoor.boxes.opening.top, 22);
+assert.strictEqual(hybridAnalyzedDoor.boxes.visibleOpening.left, 32);
+assert(hybridAnalyzedDoor.notes.includes('ai-assisted'));
+
+const invalidAiClient = {
+  responses: {
+    create: async () => ({
+      output_text: JSON.stringify({
+        doorType: 'single',
+        viewSide: 'front',
+        boxes: {
+          outerTrim: { left: -999, top: -999, right: -1, bottom: -1 },
+          opening: null,
+          visibleOpening: null,
+          doorLeaf: null,
+          handle: null,
+          lock: null,
+          transom: null,
+          header: null,
+          shadowRegions: []
+        },
+        keypoints: { doorBottomY: null },
+        modes: { heightBottomMode: 'shared' },
+        confidence: { overall: 'low' },
+        needsUserAdjustment: false,
+        notes: 'invalid ai structure'
+      })
+    })
+  }
+};
+const fallbackAnalyzedDoor = await analyzeDoor({
+  image: hybridAnalyzerImage,
+  imageSize: { width: 120, height: 160 },
+  doorType: 'single',
+  viewSide: 'front',
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  mode: 'hybrid',
+  client: invalidAiClient
+});
+assert.notStrictEqual(fallbackAnalyzedDoor.boxes.outerTrim.left, -999);
+assert.strictEqual(fallbackAnalyzedDoor.needsUserAdjustment, false);
+assert(fallbackAnalyzedDoor.notes.includes('AI analyzer fallback'));
+
 const mockDoor = mockAnalyzer({
   doorType: '双开门',
   viewSide: 'back'

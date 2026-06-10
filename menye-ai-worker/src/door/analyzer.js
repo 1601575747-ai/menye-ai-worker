@@ -2,7 +2,10 @@
 
 const { TaskType } = require('./schema');
 const { normalizeDoorType } = require('./profiles');
-const { buildDoorStructurePrompt } = require('./prompts');
+const {
+  buildDoorStructurePrompt,
+  buildDoorStructureRefinementPrompt
+} = require('./prompts');
 const {
   createOpenAIClient,
   getDefaultVisionModel
@@ -47,6 +50,30 @@ function normalizeBox(box) {
     return null;
   }
   return Object.freeze({ left, top, right, bottom });
+}
+
+function getImageMimeType(image) {
+  if (!image || image.length < 4) {
+    return 'image/png';
+  }
+  if (image[0] === 0xff && image[1] === 0xd8) {
+    return 'image/jpeg';
+  }
+  if (image[0] === 0x89 && image[1] === 0x50 && image[2] === 0x4e && image[3] === 0x47) {
+    return 'image/png';
+  }
+  if (image[0] === 0x52 && image[1] === 0x49 && image[2] === 0x46 && image[3] === 0x46) {
+    return 'image/webp';
+  }
+  return 'image/png';
+}
+
+function imageBufferToDataUrl(image) {
+  if (!Buffer.isBuffer(image) && !(image instanceof Uint8Array)) {
+    return '';
+  }
+  const buffer = Buffer.isBuffer(image) ? image : Buffer.from(image);
+  return `data:${getImageMimeType(buffer)};base64,${buffer.toString('base64')}`;
 }
 
 function normalizeShadowRegions(value) {
@@ -117,6 +144,89 @@ function normalizeDoorStructure(raw, context = {}) {
       message: 'Missing critical door structure boundary'
     }))),
     notes: typeof source.notes === 'string' ? source.notes : ''
+  });
+}
+
+function getImageSizeFromContext(context = {}) {
+  const width = Number(context.imageSize && context.imageSize.width);
+  const height = Number(context.imageSize && context.imageSize.height);
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : 0,
+    height: Number.isFinite(height) && height > 0 ? height : 0
+  };
+}
+
+function isBoxWithinImage(box, imageSize, tolerance) {
+  if (!box) {
+    return false;
+  }
+  if (!imageSize.width || !imageSize.height) {
+    return true;
+  }
+  return box.left >= -tolerance &&
+    box.top >= -tolerance &&
+    box.right <= imageSize.width + tolerance &&
+    box.bottom <= imageSize.height + tolerance &&
+    box.right > box.left &&
+    box.bottom > box.top;
+}
+
+function containsBox(outer, inner, tolerance) {
+  if (!outer || !inner) {
+    return false;
+  }
+  return inner.left >= outer.left - tolerance &&
+    inner.top >= outer.top - tolerance &&
+    inner.right <= outer.right + tolerance &&
+    inner.bottom <= outer.bottom + tolerance;
+}
+
+function getStructureQualityIssues(doorStructure, context = {}) {
+  const issues = [];
+  const imageSize = getImageSizeFromContext(context);
+  const tolerance = Math.max(8, Math.round(Math.min(imageSize.width || 1000, imageSize.height || 1000) * 0.035));
+  const boxes = doorStructure && doorStructure.boxes ? doorStructure.boxes : {};
+  for (const key of ['outerTrim', 'opening', 'visibleOpening', 'doorLeaf']) {
+    if (!isBoxWithinImage(boxes[key], imageSize, tolerance)) {
+      issues.push(`invalid boxes.${key}`);
+    }
+  }
+  if (!Number.isFinite(doorStructure && doorStructure.keypoints && doorStructure.keypoints.doorBottomY)) {
+    issues.push('invalid keypoints.doorBottomY');
+  }
+  if (boxes.outerTrim && boxes.opening && !containsBox(boxes.outerTrim, boxes.opening, tolerance)) {
+    issues.push('opening outside outerTrim');
+  }
+  if (boxes.opening && boxes.visibleOpening && !containsBox(boxes.opening, boxes.visibleOpening, tolerance)) {
+    issues.push('visibleOpening outside opening');
+  }
+  if (boxes.outerTrim && Number.isFinite(doorStructure && doorStructure.keypoints && doorStructure.keypoints.doorBottomY)) {
+    const doorBottomY = doorStructure.keypoints.doorBottomY;
+    if (doorBottomY < boxes.outerTrim.top || doorBottomY > boxes.outerTrim.bottom + tolerance) {
+      issues.push('doorBottomY outside outerTrim');
+    }
+  }
+  return issues;
+}
+
+function mergeAnalyzerNotes(primary, fallback, prefix) {
+  const parts = [];
+  if (prefix) {
+    parts.push(prefix);
+  }
+  if (primary && primary.notes) {
+    parts.push(primary.notes);
+  }
+  if (fallback && fallback.notes) {
+    parts.push(`fallback: ${fallback.notes}`);
+  }
+  return parts.filter(Boolean).join(' | ');
+}
+
+function withAnalyzerNote(doorStructure, notes) {
+  return Object.freeze({
+    ...doorStructure,
+    notes
   });
 }
 
@@ -855,9 +965,10 @@ async function heuristicAnalyzer({ image, imageSize, doorType, viewSide } = {}) 
   }
 }
 
-async function openAIDoorAnalyzer({ imageUrl, doorType, viewSide, taskType, client } = {}) {
+async function openAIDoorAnalyzer({ image, imageUrl, imageSize, doorType, viewSide, taskType, client, heuristicStructure } = {}) {
   const openai = client || createOpenAIClient();
-  if (!openai || !imageUrl) {
+  const resolvedImageUrl = imageUrl || imageBufferToDataUrl(image);
+  if (!openai || !resolvedImageUrl) {
     return normalizeDoorStructure({
       doorType,
       viewSide,
@@ -877,11 +988,13 @@ async function openAIDoorAnalyzer({ imageUrl, doorType, viewSide, taskType, clie
         content: [
           {
             type: 'input_text',
-            text: buildDoorStructurePrompt({ doorType, viewSide, taskType })
+            text: heuristicStructure
+              ? buildDoorStructureRefinementPrompt({ doorType, viewSide, taskType, imageSize, heuristicStructure })
+              : buildDoorStructurePrompt({ doorType, viewSide, taskType })
           },
           {
             type: 'input_image',
-            image_url: imageUrl
+            image_url: resolvedImageUrl
           }
         ]
       }
@@ -902,12 +1015,24 @@ async function openAIDoorAnalyzer({ imageUrl, doorType, viewSide, taskType, clie
   return normalizeDoorStructure(parsed.value, { doorType, viewSide });
 }
 
-async function analyzeDoor({ imageUrl, doorType, viewSide, taskType, mode, client } = {}) {
+function shouldUseHybridAIAnalyzer(mode) {
+  if (mode === 'heuristic' || mode === 'mock') {
+    return false;
+  }
+  if (mode === 'hybrid' || mode === 'ai-assisted') {
+    return true;
+  }
+  return process.env.USE_AI_DIMENSION_ANALYZER !== 'false';
+}
+
+async function analyzeDoor({ image, imageUrl, imageSize, doorType, viewSide, taskType, mode, client } = {}) {
   const normalizedTaskType = taskType || TaskType.DIMENSION_ANNOTATION;
   if (mode === 'openai') {
     try {
       return await openAIDoorAnalyzer({
+        image,
         imageUrl,
+        imageSize,
         doorType,
         viewSide,
         taskType: normalizedTaskType,
@@ -933,14 +1058,52 @@ async function analyzeDoor({ imageUrl, doorType, viewSide, taskType, mode, clien
       taskType: normalizedTaskType
     });
   }
-  if (arguments[0] && arguments[0].image) {
-    return heuristicAnalyzer({
-      image: arguments[0].image,
-      imageSize: arguments[0].imageSize,
+  if (image) {
+    const heuristicStructure = await heuristicAnalyzer({
+      image,
+      imageSize,
       doorType,
       viewSide,
       taskType: normalizedTaskType
     });
+    if (!shouldUseHybridAIAnalyzer(mode)) {
+      return heuristicStructure;
+    }
+    try {
+      const aiStructure = await openAIDoorAnalyzer({
+        image,
+        imageUrl,
+        imageSize,
+        doorType,
+        viewSide,
+        taskType: normalizedTaskType,
+        client,
+        heuristicStructure
+      });
+      const aiIssues = getStructureQualityIssues(aiStructure, { imageSize });
+      if (!aiStructure.needsUserAdjustment && aiIssues.length === 0) {
+        return withAnalyzerNote(
+          aiStructure,
+          mergeAnalyzerNotes(aiStructure, heuristicStructure, 'ai-assisted door structure')
+        );
+      }
+      const heuristicIssues = getStructureQualityIssues(heuristicStructure, { imageSize });
+      if (!heuristicStructure.needsUserAdjustment && heuristicIssues.length === 0) {
+        return withAnalyzerNote(
+          heuristicStructure,
+          mergeAnalyzerNotes(heuristicStructure, aiStructure, `AI analyzer fallback; issues=${aiIssues.join(',') || 'needs adjustment'}`)
+        );
+      }
+      return withAnalyzerNote(
+        aiStructure,
+        mergeAnalyzerNotes(aiStructure, heuristicStructure, `AI analyzer needs adjustment; issues=${aiIssues.join(',')}`)
+      );
+    } catch (error) {
+      return withAnalyzerNote(
+        heuristicStructure,
+        mergeAnalyzerNotes(heuristicStructure, null, `AI analyzer failed: ${error && error.message ? error.message : error}`)
+      );
+    }
   }
   return mockAnalyzer({
     imageUrl,
