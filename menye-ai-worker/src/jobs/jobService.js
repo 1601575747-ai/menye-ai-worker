@@ -53,6 +53,18 @@ function pickImageRefs(payload = {}) {
   };
 }
 
+function normalizeWhiteBackground(payload = {}) {
+  if (typeof payload.whiteBackground === 'boolean') {
+    return payload.whiteBackground;
+  }
+  if (typeof payload.dimensionWhiteBackground === 'boolean') {
+    return payload.dimensionWhiteBackground;
+  }
+  const backgroundInfo = String(payload.backgroundInfo || '');
+  const requirement = String(payload.requirement || '');
+  return /白板|白底|纯白|改白/.test(`${backgroundInfo} ${requirement}`);
+}
+
 function normalizeCreatePayload(payload = {}) {
   const taskType = normalizeTaskType(payload.taskType);
   const imageRefs = pickImageRefs(payload);
@@ -66,9 +78,7 @@ function normalizeCreatePayload(payload = {}) {
     imageSize: payload.imageSize || null,
     imageUrl: imageRefs.imageUrl,
     imageRefs,
-    whiteBackground: typeof payload.whiteBackground === 'boolean'
-      ? payload.whiteBackground
-      : Boolean(payload.dimensionWhiteBackground),
+    whiteBackground: normalizeWhiteBackground(payload),
     analyzerMode: payload.analyzerMode || '',
     metadata: payload.metadata || {}
   };

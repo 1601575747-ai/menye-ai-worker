@@ -11,7 +11,8 @@ const {
 const {
   analyzeDoor,
   mockAnalyzer,
-  normalizeDoorStructure
+  normalizeDoorStructure,
+  mergeAiStructureWithHeuristic
 } = require('../src/door/analyzer');
 const {
   doorTypeProfiles,
@@ -467,6 +468,55 @@ assert.notStrictEqual(fallbackAnalyzedDoor.boxes.outerTrim.left, -999);
 assert.strictEqual(fallbackAnalyzedDoor.needsUserAdjustment, false);
 assert(fallbackAnalyzedDoor.notes.includes('AI analyzer fallback'));
 
+const heuristicWideStructure = normalizeDoorStructure({
+  doorType: 'double',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 100, top: 20, right: 900, bottom: 980 },
+    opening: { left: 160, top: 240, right: 840, bottom: 970 },
+    visibleOpening: { left: 190, top: 280, right: 810, bottom: 970 },
+    doorLeaf: { left: 230, top: 300, right: 770, bottom: 970 },
+    handle: null,
+    lock: null,
+    transom: null,
+    header: { left: 100, top: 20, right: 900, bottom: 980 },
+    shadowRegions: []
+  },
+  keypoints: { doorBottomY: 970 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'heuristic' },
+  needsUserAdjustment: false,
+  notes: 'heuristic wide structure'
+});
+const narrowAiStructure = normalizeDoorStructure({
+  doorType: 'double',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 100, top: 20, right: 900, bottom: 980 },
+    opening: { left: 360, top: 245, right: 640, bottom: 970 },
+    visibleOpening: { left: 390, top: 285, right: 610, bottom: 970 },
+    doorLeaf: { left: 230, top: 300, right: 770, bottom: 970 },
+    handle: null,
+    lock: null,
+    transom: null,
+    header: { left: 100, top: 20, right: 900, bottom: 980 },
+    shadowRegions: []
+  },
+  keypoints: { doorBottomY: 970 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'high' },
+  needsUserAdjustment: false,
+  notes: 'narrow ai structure'
+});
+const guardedStructure = mergeAiStructureWithHeuristic(narrowAiStructure, heuristicWideStructure, {
+  imageSize: { width: 1000, height: 1000 }
+});
+assert.strictEqual(guardedStructure.boxes.opening.left, heuristicWideStructure.boxes.opening.left);
+assert.strictEqual(guardedStructure.boxes.opening.right, heuristicWideStructure.boxes.opening.right);
+assert.strictEqual(guardedStructure.boxes.visibleOpening.left, heuristicWideStructure.boxes.visibleOpening.left);
+assert.strictEqual(guardedStructure.boxes.visibleOpening.right, heuristicWideStructure.boxes.visibleOpening.right);
+assert(guardedStructure.notes.includes('restored from heuristic guard'));
+
 const mockDoor = mockAnalyzer({
   doorType: '双开门',
   viewSide: 'back'
@@ -782,12 +832,29 @@ assert.strictEqual(pipelineResult.status, JobStatus.SUCCEEDED);
 assert.strictEqual(pipelineResult.succeeded, true);
 assert.strictEqual(pipelineResult.validation.passed, true);
 assert.strictEqual(pipelineResult.metadata.whiteBackground, true);
+assert(pipelineResult.metadata.doorStructure);
+assert(pipelineResult.metadata.doorStructure.boxes.opening);
+assert(Array.isArray(pipelineResult.metadata.rules));
+assert(pipelineResult.metadata.rules.some((rule) => rule.field === 'openingWidth'));
 assert.strictEqual(pipelineResult.renderPlan.lines.length, 1);
 assert.strictEqual(pipelineResult.renderPlan.textOnlyAnnotations.length, 1);
 assert(['frontend-render-plan', 'sharp-svg-overlay'].includes(pipelineResult.rendererType));
 
 clearJobsForTest();
 clearArtifactsForTest();
+
+const whiteBackgroundCompatJob = createJob({
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  doorType: '单开门',
+  viewSide: 'front',
+  inputs: {
+    openingWidth: '980'
+  },
+  imageUrl: 'mock://door.png',
+  imageSize,
+  backgroundInfo: '背景改为白板'
+});
+assert.strictEqual(whiteBackgroundCompatJob.whiteBackground, true);
 
 const createdJob = createJob({
   taskType: TaskType.DIMENSION_ANNOTATION,

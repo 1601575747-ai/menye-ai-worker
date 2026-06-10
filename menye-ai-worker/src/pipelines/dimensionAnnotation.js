@@ -55,6 +55,55 @@ function makePipelineIssue(code, message, details = {}) {
   });
 }
 
+function summarizeBox(box) {
+  if (!box) {
+    return null;
+  }
+  return Object.freeze({
+    left: box.left,
+    top: box.top,
+    right: box.right,
+    bottom: box.bottom
+  });
+}
+
+function summarizeDoorStructure(doorStructure) {
+  const boxes = doorStructure && doorStructure.boxes ? doorStructure.boxes : {};
+  return Object.freeze({
+    boxes: Object.freeze({
+      outerTrim: summarizeBox(boxes.outerTrim),
+      opening: summarizeBox(boxes.opening),
+      visibleOpening: summarizeBox(boxes.visibleOpening),
+      doorLeaf: summarizeBox(boxes.doorLeaf),
+      transom: summarizeBox(boxes.transom),
+      header: summarizeBox(boxes.header),
+      shadowRegions: Object.freeze(Array.isArray(boxes.shadowRegions) ? boxes.shadowRegions.map(summarizeBox).filter(Boolean) : [])
+    }),
+    keypoints: Object.freeze({
+      doorBottomY: doorStructure && doorStructure.keypoints ? doorStructure.keypoints.doorBottomY : null
+    }),
+    modes: Object.freeze({
+      heightBottomMode: doorStructure && doorStructure.modes ? doorStructure.modes.heightBottomMode : 'shared'
+    }),
+    confidence: Object.freeze({ ...((doorStructure && doorStructure.confidence) || {}) }),
+    needsUserAdjustment: Boolean(doorStructure && doorStructure.needsUserAdjustment),
+    notes: doorStructure && doorStructure.notes ? doorStructure.notes : ''
+  });
+}
+
+function summarizeRules(rules) {
+  return Object.freeze((Array.isArray(rules) ? rules : []).map((rule) => Object.freeze({
+    field: rule.field,
+    type: rule.type,
+    orientation: rule.orientation,
+    label: rule.label,
+    value: rule.value,
+    unit: rule.unit,
+    sourceBoundary: rule.sourceBoundary || null,
+    confidence: rule.confidence
+  })));
+}
+
 async function runDimensionAnnotationPipeline(job = {}) {
   const normalizedJob = normalizeDimensionAnnotationJob(job);
   if (normalizedJob.taskType !== TaskType.DIMENSION_ANNOTATION) {
@@ -131,7 +180,9 @@ async function runDimensionAnnotationPipeline(job = {}) {
       : normalizedJob.whiteBackground,
     heightBottomMode: doorStructure.modes && doorStructure.modes.heightBottomMode,
     rendererType: renderResult.rendererType,
-    renderMetadata: renderResult.metadata || null
+    renderMetadata: renderResult.metadata || null,
+    doorStructure: summarizeDoorStructure(doorStructure),
+    rules: summarizeRules(ruleResult.rules)
   });
 
   const validation = validateDimensionAnnotation({

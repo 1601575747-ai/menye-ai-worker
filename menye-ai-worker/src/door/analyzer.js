@@ -230,6 +230,153 @@ function withAnalyzerNote(doorStructure, notes) {
   });
 }
 
+function boxWidth(box) {
+  return box && hasNumber(box.left) && hasNumber(box.right) ? box.right - box.left : 0;
+}
+
+function mergeBoxSpan(aiBox, heuristicBox, options = {}) {
+  if (!aiBox && !heuristicBox) {
+    return null;
+  }
+  if (!aiBox) {
+    return heuristicBox;
+  }
+  if (!heuristicBox) {
+    return aiBox;
+  }
+  const useHeuristicX = Boolean(options.useHeuristicX);
+  const useHeuristicY = Boolean(options.useHeuristicY);
+  return normalizeBox({
+    left: useHeuristicX ? heuristicBox.left : aiBox.left,
+    top: useHeuristicY ? heuristicBox.top : aiBox.top,
+    right: useHeuristicX ? heuristicBox.right : aiBox.right,
+    bottom: useHeuristicY ? heuristicBox.bottom : aiBox.bottom
+  });
+}
+
+function isSuspiciouslyNarrow(aiBox, heuristicBox, outerBox, options = {}) {
+  const aiWidth = boxWidth(aiBox);
+  const heuristicWidth = boxWidth(heuristicBox);
+  const outerWidth = boxWidth(outerBox);
+  if (!aiWidth || !heuristicWidth) {
+    return false;
+  }
+  const heuristicRatio = Number(options.heuristicRatio) || 0.62;
+  const outerRatio = Number(options.outerRatio) || 0.42;
+  return aiWidth < heuristicWidth * heuristicRatio ||
+    (outerWidth > 0 && aiWidth < outerWidth * outerRatio);
+}
+
+function isSuspiciouslyShort(aiBox, heuristicBox, imageSize, options = {}) {
+  if (!aiBox || !heuristicBox) {
+    return false;
+  }
+  const threshold = Math.max(24, (Number(imageSize && imageSize.height) || 1000) * (Number(options.maxDeltaRatio) || 0.12));
+  return Math.abs(aiBox.top - heuristicBox.top) > threshold ||
+    Math.abs(aiBox.bottom - heuristicBox.bottom) > threshold;
+}
+
+function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context = {}) {
+  if (!aiStructure || !heuristicStructure || !heuristicStructure.boxes) {
+    return aiStructure;
+  }
+  const aiBoxes = aiStructure.boxes || {};
+  const heuristicBoxes = heuristicStructure.boxes || {};
+  const nextBoxes = {};
+  const notes = [];
+
+  const outerTooSmall = isSuspiciouslyNarrow(aiBoxes.outerTrim, heuristicBoxes.outerTrim, heuristicBoxes.outerTrim, {
+    heuristicRatio: 0.8,
+    outerRatio: 0.75
+  });
+  nextBoxes.outerTrim = outerTooSmall ? heuristicBoxes.outerTrim : (aiBoxes.outerTrim || heuristicBoxes.outerTrim);
+  if (outerTooSmall) {
+    notes.push('outerTrim x-span restored from heuristic guard');
+  }
+
+  const outerForRatios = nextBoxes.outerTrim || heuristicBoxes.outerTrim || aiBoxes.outerTrim;
+  const openingTooNarrow = isSuspiciouslyNarrow(aiBoxes.opening, heuristicBoxes.opening, outerForRatios, {
+    heuristicRatio: 0.6,
+    outerRatio: 0.46
+  });
+  const openingTooShort = isSuspiciouslyShort(aiBoxes.opening, heuristicBoxes.opening, context.imageSize, {
+    maxDeltaRatio: 0.16
+  });
+  nextBoxes.opening = mergeBoxSpan(aiBoxes.opening, heuristicBoxes.opening, {
+    useHeuristicX: openingTooNarrow,
+    useHeuristicY: openingTooShort
+  }) || aiBoxes.opening || heuristicBoxes.opening;
+  if (openingTooNarrow) {
+    notes.push('opening left/right restored from heuristic guard');
+  }
+  if (openingTooShort) {
+    notes.push('opening top/bottom restored from heuristic guard');
+  }
+
+  const visibleTooNarrow = isSuspiciouslyNarrow(aiBoxes.visibleOpening, heuristicBoxes.visibleOpening, outerForRatios, {
+    heuristicRatio: 0.6,
+    outerRatio: 0.4
+  });
+  const visibleTooShort = isSuspiciouslyShort(aiBoxes.visibleOpening, heuristicBoxes.visibleOpening, context.imageSize, {
+    maxDeltaRatio: 0.16
+  });
+  nextBoxes.visibleOpening = mergeBoxSpan(aiBoxes.visibleOpening, heuristicBoxes.visibleOpening, {
+    useHeuristicX: visibleTooNarrow,
+    useHeuristicY: visibleTooShort
+  }) || aiBoxes.visibleOpening || heuristicBoxes.visibleOpening;
+  if (visibleTooNarrow) {
+    notes.push('visibleOpening left/right restored from heuristic guard');
+  }
+  if (visibleTooShort) {
+    notes.push('visibleOpening top/bottom restored from heuristic guard');
+  }
+
+  nextBoxes.doorLeaf = aiBoxes.doorLeaf || heuristicBoxes.doorLeaf;
+  nextBoxes.handle = aiBoxes.handle || heuristicBoxes.handle || null;
+  nextBoxes.lock = aiBoxes.lock || heuristicBoxes.lock || null;
+  nextBoxes.transom = aiBoxes.transom || heuristicBoxes.transom || null;
+  nextBoxes.header = aiBoxes.header || heuristicBoxes.header || nextBoxes.outerTrim;
+  nextBoxes.shadowRegions = Array.isArray(aiBoxes.shadowRegions) ? aiBoxes.shadowRegions : [];
+
+  if (nextBoxes.header && nextBoxes.outerTrim && boxWidth(nextBoxes.header) < boxWidth(nextBoxes.outerTrim) * 0.88) {
+    nextBoxes.header = heuristicBoxes.header || nextBoxes.outerTrim;
+    notes.push('header restored from heuristic guard');
+  }
+
+  const imageHeight = Number(context.imageSize && context.imageSize.height) || 1000;
+  const aiBottom = aiStructure.keypoints && aiStructure.keypoints.doorBottomY;
+  const heuristicBottom = heuristicStructure.keypoints && heuristicStructure.keypoints.doorBottomY;
+  const useHeuristicBottom = hasNumber(aiBottom) &&
+    hasNumber(heuristicBottom) &&
+    Math.abs(aiBottom - heuristicBottom) > Math.max(24, imageHeight * 0.04);
+
+  if (!notes.length && !useHeuristicBottom) {
+    return aiStructure;
+  }
+  if (useHeuristicBottom) {
+    notes.push('doorBottomY restored from heuristic guard');
+  }
+
+  return normalizeDoorStructure({
+    doorType: aiStructure.doorType,
+    viewSide: aiStructure.viewSide,
+    boxes: nextBoxes,
+    keypoints: {
+      doorBottomY: useHeuristicBottom ? heuristicBottom : aiBottom
+    },
+    modes: aiStructure.modes,
+    confidence: {
+      ...(aiStructure.confidence || {}),
+      guard: notes.length ? 'applied' : 'not_applied'
+    },
+    needsUserAdjustment: aiStructure.needsUserAdjustment,
+    notes: mergeAnalyzerNotes(aiStructure, heuristicStructure, notes.join('; '))
+  }, {
+    doorType: aiStructure.doorType,
+    viewSide: aiStructure.viewSide
+  });
+}
+
 function mockAnalyzer({ doorType, viewSide } = {}) {
   return normalizeDoorStructure({
     doorType,
@@ -1070,7 +1217,7 @@ async function analyzeDoor({ image, imageUrl, imageSize, doorType, viewSide, tas
       return heuristicStructure;
     }
     try {
-      const aiStructure = await openAIDoorAnalyzer({
+      const rawAiStructure = await openAIDoorAnalyzer({
         image,
         imageUrl,
         imageSize,
@@ -1080,6 +1227,7 @@ async function analyzeDoor({ image, imageUrl, imageSize, doorType, viewSide, tas
         client,
         heuristicStructure
       });
+      const aiStructure = mergeAiStructureWithHeuristic(rawAiStructure, heuristicStructure, { imageSize });
       const aiIssues = getStructureQualityIssues(aiStructure, { imageSize });
       if (!aiStructure.needsUserAdjustment && aiIssues.length === 0) {
         return withAnalyzerNote(
@@ -1118,5 +1266,6 @@ module.exports = {
   mockAnalyzer,
   heuristicAnalyzer,
   openAIDoorAnalyzer,
-  normalizeDoorStructure
+  normalizeDoorStructure,
+  mergeAiStructureWithHeuristic
 };

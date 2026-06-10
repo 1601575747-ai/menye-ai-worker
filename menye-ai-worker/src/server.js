@@ -3047,6 +3047,18 @@ function getResultBufferArtifact(jobView) {
   return getArtifact(resultBufferRef.artifactId);
 }
 
+function normalizeDimensionWhiteBackground(job) {
+  if (typeof (job && job.whiteBackground) === 'boolean') {
+    return job.whiteBackground;
+  }
+  if (typeof (job && job.dimensionWhiteBackground) === 'boolean') {
+    return job.dimensionWhiteBackground;
+  }
+  const backgroundInfo = String(job && job.backgroundInfo ? job.backgroundInfo : '');
+  const requirement = String(job && job.requirement ? job.requirement : '');
+  return /白板|白底|纯白|改白/.test(`${backgroundInfo} ${requirement}`);
+}
+
 async function processDimensionAnnotationJobWithNewPipeline(jobId, job) {
   const sourceImageFileID = getSourceImageFileID(job);
   if (!sourceImageFileID) {
@@ -3070,9 +3082,7 @@ async function processDimensionAnnotationJobWithNewPipeline(jobId, job) {
     inputs: getDimensionInputMap(job),
     image: sourceBuffer,
     imageSize,
-    whiteBackground: typeof job.whiteBackground === 'boolean'
-      ? job.whiteBackground
-      : job.dimensionWhiteBackground,
+    whiteBackground: normalizeDimensionWhiteBackground(job),
     metadata: {
       legacyJobId: jobId,
       sourceImageFileID
