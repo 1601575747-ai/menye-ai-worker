@@ -35,10 +35,22 @@ function getOutputSize(renderPlan, metadata) {
   };
 }
 
+function estimateTextWidth(text) {
+  return Array.from(String(text || '')).reduce((width, char) => {
+    if (/[\u3400-\u9fff]/.test(char)) {
+      return width + 26;
+    }
+    if (/[A-Z0-9]/i.test(char)) {
+      return width + 13;
+    }
+    return width + 12;
+  }, 0);
+}
+
 function estimateTextBounds(textItem) {
   const text = String(textItem && textItem.text ? textItem.text : '');
   const lines = text.split('\n');
-  const width = Math.max(...lines.map((line) => line.length), 1) * 16;
+  const width = Math.max(...lines.map((line) => estimateTextWidth(line)), 24);
   const height = Math.max(lines.length, 1) * 30;
   const x = Number(textItem && textItem.position && textItem.position.x) || 0;
   const y = Number(textItem && textItem.position && textItem.position.y) || 0;

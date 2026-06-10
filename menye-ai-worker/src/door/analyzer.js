@@ -159,6 +159,10 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function hasNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 function median(values) {
   if (!values.length) {
     return 0;
@@ -343,7 +347,7 @@ function buildColumnScores(features, width, height) {
 function findHorizontalBounds(features, width, height) {
   if (features.plainBackground && features.foregroundBounds && features.foregroundBounds.count) {
     const bounds = features.foregroundBounds;
-    const padding = Math.max(3, Math.floor((bounds.right - bounds.left) * 0.015));
+    const padding = Math.max(1, Math.floor((bounds.right - bounds.left) * 0.002));
     return {
       left: clamp(bounds.left - padding, 0, width - 2),
       right: clamp(bounds.right + padding, 1, width - 1),
@@ -428,7 +432,7 @@ function strongestLowerHorizontalEdge(horizontalScores, height) {
 function findVerticalBounds(features, width, height, left, right) {
   if (features.plainBackground && features.foregroundBounds && features.foregroundBounds.count) {
     const bounds = features.foregroundBounds;
-    const padding = Math.max(2, Math.floor((bounds.bottom - bounds.top) * 0.006));
+    const padding = Math.max(1, Math.floor((bounds.bottom - bounds.top) * 0.002));
     return {
       top: clamp(bounds.top - padding, 0, height - 2),
       bottom: clamp(bounds.bottom + padding, bounds.top + 1, height - 1),
@@ -476,6 +480,254 @@ function insetBox(box, insetX, insetTop, insetBottom) {
   });
 }
 
+function scoreVerticalEdges(features, width, height, top, bottom) {
+  const scores = new Array(width).fill(0);
+  const safeTop = clamp(Math.floor(top), 1, height - 2);
+  const safeBottom = clamp(Math.ceil(bottom), safeTop + 1, height - 1);
+  const span = Math.max(1, safeBottom - safeTop);
+  for (let x = 1; x < width - 1; x += 1) {
+    let score = 0;
+    for (let y = safeTop; y < safeBottom; y += 1) {
+      const index = y * width + x;
+      const edge = features.verticalEdge[index];
+      if (edge > 12) {
+        score += Math.min(42, edge);
+      }
+      const foregroundChanged = features.foreground[index] !== features.foreground[index - 1];
+      if (foregroundChanged) {
+        score += 18;
+      }
+    }
+    scores[x] = score / span;
+  }
+  return smoothValues(scores, Math.max(2, Math.floor(width * 0.006)));
+}
+
+function scoreHorizontalEdges(features, width, height, left, right) {
+  const scores = new Array(height).fill(0);
+  const safeLeft = clamp(Math.floor(left), 1, width - 2);
+  const safeRight = clamp(Math.ceil(right), safeLeft + 1, width - 1);
+  const span = Math.max(1, safeRight - safeLeft);
+  for (let y = 1; y < height - 1; y += 1) {
+    let score = 0;
+    for (let x = safeLeft; x < safeRight; x += 1) {
+      const edge = features.horizontalEdge[y * width + x];
+      if (edge > 10) {
+        score += Math.min(42, edge);
+      }
+    }
+    scores[y] = score / span;
+  }
+  return smoothValues(scores, Math.max(2, Math.floor(height * 0.004)));
+}
+
+function localPercentile(values, start, end, ratio) {
+  const safeStart = clamp(Math.floor(start), 0, values.length - 1);
+  const safeEnd = clamp(Math.ceil(end), safeStart + 1, values.length);
+  return percentile(values.slice(safeStart, safeEnd), ratio);
+}
+
+function isLocalPeak(scores, index, radius) {
+  const score = scores[index] || 0;
+  for (let offset = -radius; offset <= radius; offset += 1) {
+    const next = index + offset;
+    if (next < 0 || next >= scores.length || next === index) {
+      continue;
+    }
+    if ((scores[next] || 0) > score) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function findEdgeNearTarget(scores, start, end, target, options = {}) {
+  const safeStart = clamp(Math.floor(start), 0, scores.length - 2);
+  const safeEnd = clamp(Math.ceil(end), safeStart + 1, scores.length - 1);
+  const safeTarget = clamp(Math.round(target), safeStart, safeEnd);
+  const threshold = Math.max(
+    Number(options.minScore) || 0,
+    localPercentile(scores, safeStart, safeEnd, 0.58) * 0.62
+  );
+  let bestIndex = safeTarget;
+  let bestScore = -Infinity;
+  const range = Math.max(1, safeEnd - safeStart);
+  const peakRadius = Number(options.peakRadius) || 3;
+
+  for (let index = safeStart; index <= safeEnd; index += 1) {
+    const signal = scores[index] || 0;
+    if (signal < threshold || !isLocalPeak(scores, index, peakRadius)) {
+      continue;
+    }
+    const distance = Math.abs(index - safeTarget) / range;
+    const targetBias = 1 - Math.min(0.72, distance * 1.7);
+    const combined = signal * (0.42 + targetBias);
+    if (combined > bestScore) {
+      bestScore = combined;
+      bestIndex = index;
+    }
+  }
+
+  return Object.freeze({
+    index: bestIndex,
+    found: bestScore > -Infinity
+  });
+}
+
+function chooseEdgeNearTarget(scores, start, end, target, options = {}) {
+  return findEdgeNearTarget(scores, start, end, target, options).index;
+}
+
+function findRowInBand(horizontalScores, outerTrim, startRatio, endRatio, targetRatio, options = {}) {
+  const height = outerTrim.bottom - outerTrim.top;
+  const start = outerTrim.top + height * startRatio;
+  const end = outerTrim.top + height * endRatio;
+  const target = outerTrim.top + height * targetRatio;
+  return findEdgeNearTarget(horizontalScores, start, end, target, {
+    minScore: Number(options.minScore) || 0.025,
+    peakRadius: 2
+  });
+}
+
+function chooseOpeningTopRow(horizontalScores, outerTrim) {
+  const height = outerTrim.bottom - outerTrim.top;
+  const midRow = findRowInBand(horizontalScores, outerTrim, 0.23, 0.40, 0.29, {
+    minScore: 3
+  });
+  if (midRow.found) {
+    return midRow.index;
+  }
+  const topRow = findRowInBand(horizontalScores, outerTrim, 0.025, 0.13, 0.055, {
+    minScore: 3
+  });
+  if (topRow.found) {
+    return topRow.index;
+  }
+  return Math.round(outerTrim.top + height * 0.075);
+}
+
+function chooseNextRowAfter(horizontalScores, start, end, fallback) {
+  const chosen = findEdgeNearTarget(horizontalScores, start, end, fallback, {
+    minScore: 2.6,
+    peakRadius: 2
+  });
+  return chosen.found ? chosen.index : Math.round(fallback);
+}
+
+function makeImageDrivenBoxes(features, analysisSize, outerTrim) {
+  const width = outerTrim.right - outerTrim.left;
+  const height = outerTrim.bottom - outerTrim.top;
+  const verticalTop = outerTrim.top + height * 0.24;
+  const verticalBottom = outerTrim.bottom - height * 0.055;
+  const verticalScores = scoreVerticalEdges(features, analysisSize.width, analysisSize.height, verticalTop, verticalBottom);
+  const horizontalScores = scoreHorizontalEdges(
+    features,
+    analysisSize.width,
+    analysisSize.height,
+    outerTrim.left + width * 0.05,
+    outerTrim.right - width * 0.05
+  );
+
+  const openingLeft = chooseEdgeNearTarget(
+    verticalScores,
+    outerTrim.left + width * 0.035,
+    outerTrim.left + width * 0.13,
+    outerTrim.left + width * 0.055,
+    { minScore: 3.5 }
+  );
+  const openingRight = chooseEdgeNearTarget(
+    verticalScores,
+    outerTrim.right - width * 0.13,
+    outerTrim.right - width * 0.035,
+    outerTrim.right - width * 0.055,
+    { minScore: 3.5 }
+  );
+  const visibleLeft = chooseEdgeNearTarget(
+    verticalScores,
+    outerTrim.left + width * 0.075,
+    outerTrim.left + width * 0.18,
+    outerTrim.left + width * 0.11,
+    { minScore: 3.2 }
+  );
+  const visibleRight = chooseEdgeNearTarget(
+    verticalScores,
+    outerTrim.right - width * 0.18,
+    outerTrim.right - width * 0.075,
+    outerTrim.right - width * 0.11,
+    { minScore: 3.2 }
+  );
+
+  const openingTop = chooseOpeningTopRow(horizontalScores, outerTrim);
+  const visibleTop = chooseNextRowAfter(
+    horizontalScores,
+    openingTop + height * 0.012,
+    Math.min(outerTrim.bottom - 1, openingTop + height * 0.13),
+    openingTop + height * 0.035
+  );
+  const lowerInset = Math.max(1, Math.round(height * 0.006));
+  const opening = normalizeBox({
+    left: openingLeft,
+    top: openingTop,
+    right: openingRight,
+    bottom: outerTrim.bottom - lowerInset
+  });
+  const visibleOpening = normalizeBox({
+    left: Math.max(opening.left + 1, visibleLeft),
+    top: Math.max(opening.top + 1, visibleTop),
+    right: Math.min(opening.right - 1, visibleRight),
+    bottom: outerTrim.bottom - lowerInset
+  });
+  const leafInsetX = Math.max(8, Math.round(width * 0.145));
+  const doorLeaf = normalizeBox({
+    left: outerTrim.left + leafInsetX,
+    top: Math.max(visibleOpening.top + 1, visibleTop),
+    right: outerTrim.right - leafInsetX,
+    bottom: outerTrim.bottom - lowerInset
+  });
+  const topBandBottom = Math.max(openingTop, outerTrim.top + height * 0.12);
+
+  return {
+    outerTrim,
+    opening,
+    visibleOpening,
+    doorLeaf,
+    handle: normalizeBox({
+      left: outerTrim.left + width * 0.43,
+      top: outerTrim.top + height * 0.48,
+      right: outerTrim.left + width * 0.57,
+      bottom: outerTrim.top + height * 0.62
+    }),
+    lock: null,
+    transom: normalizeBox({
+      left: opening.left,
+      top: outerTrim.top,
+      right: opening.right,
+      bottom: topBandBottom
+    }),
+    header: normalizeBox({
+      left: outerTrim.left,
+      top: outerTrim.top,
+      right: outerTrim.right,
+      bottom: outerTrim.bottom
+    }),
+    shadowRegions: []
+  };
+}
+
+function scaleBoxes(boxes, scaleX, scaleY, maxWidth, maxHeight) {
+  const result = {};
+  for (const [key, box] of Object.entries(boxes)) {
+    if (key === 'shadowRegions') {
+      result.shadowRegions = Array.isArray(box)
+        ? box.map((region) => scaleBox(region, scaleX, scaleY, maxWidth, maxHeight)).filter(Boolean)
+        : [];
+      continue;
+    }
+    result[key] = box ? scaleBox(box, scaleX, scaleY, maxWidth, maxHeight) : null;
+  }
+  return result;
+}
+
 function makeHeuristicBoxes(outerTrim, imageSize) {
   const width = outerTrim.right - outerTrim.left;
   const height = outerTrim.bottom - outerTrim.top;
@@ -509,9 +761,9 @@ function makeHeuristicBoxes(outerTrim, imageSize) {
       bottom: Math.min(outerTrim.bottom, outerTrim.top + topBandHeight)
     }),
     header: normalizeBox({
-      left: Math.max(0, outerTrim.left - Math.round(width * 0.035)),
-      top: Math.max(0, outerTrim.top - Math.round(height * 0.035)),
-      right: Math.min(imageSize.width, outerTrim.right + Math.round(width * 0.035)),
+      left: outerTrim.left,
+      top: outerTrim.top,
+      right: outerTrim.right,
       bottom: outerTrim.bottom
     }),
     shadowRegions: []
@@ -546,13 +798,29 @@ async function heuristicAnalyzer({ image, imageSize, doorType, viewSide } = {}) 
     const features = buildPixelFeatures(raw, analysisSize.width, analysisSize.height);
     const horizontal = findHorizontalBounds(features, analysisSize.width, analysisSize.height);
     const vertical = findVerticalBounds(features, analysisSize.width, analysisSize.height, horizontal.left, horizontal.right);
-    const outerTrim = scaleBox({
+    const analysisOuterTrim = normalizeBox({
       left: horizontal.left,
       top: vertical.top,
       right: horizontal.right,
       bottom: vertical.bottom
-    }, sourceSize.width / analysisSize.width, sourceSize.height / analysisSize.height, sourceSize.width, sourceSize.height);
-    const boxes = makeHeuristicBoxes(outerTrim, sourceSize);
+    });
+    const scaleX = sourceSize.width / analysisSize.width;
+    const scaleY = sourceSize.height / analysisSize.height;
+    const boxes = analysisOuterTrim
+      ? scaleBoxes(
+        makeImageDrivenBoxes(features, analysisSize, analysisOuterTrim),
+        scaleX,
+        scaleY,
+        sourceSize.width,
+        sourceSize.height
+      )
+      : makeHeuristicBoxes(scaleBox({
+        left: horizontal.left,
+        top: vertical.top,
+        right: horizontal.right,
+        bottom: vertical.bottom
+      }, scaleX, scaleY, sourceSize.width, sourceSize.height), sourceSize);
+    const outerTrim = boxes.outerTrim;
 
     return normalizeDoorStructure({
       doorType,

@@ -1,9 +1,31 @@
 'use strict';
 
+const path = require('path');
+
 const DEFAULT_SIZE = Object.freeze({
   width: 1024,
   height: 1024
 });
+
+const DIMENSION_FONT_PATH = path.join(__dirname, '..', 'assets', 'fonts', 'NotoSansCJKsc-dimension-subset.woff');
+const DEFAULT_TEXT_STYLE = Object.freeze({
+  fontSize: 24,
+  lineHeight: 28
+});
+const TEXT_ONLY_STYLE = Object.freeze({
+  fontSize: 26,
+  lineHeight: 32
+});
+
+let TextToSVG = null;
+let dimensionTextToSvg = null;
+
+try {
+  TextToSVG = require('text-to-svg');
+  dimensionTextToSvg = TextToSVG.loadSync(DIMENSION_FONT_PATH);
+} catch (error) {
+  dimensionTextToSvg = null;
+}
 
 function escapeXml(value) {
   return String(value === null || value === undefined ? '' : value)
@@ -19,6 +41,73 @@ function getRenderPlanSize(renderPlan) {
   const width = Number(metadataSize && metadataSize.width) || DEFAULT_SIZE.width;
   const height = Number(metadataSize && metadataSize.height) || DEFAULT_SIZE.height;
   return { width, height };
+}
+
+function getHorizontalTextAnchor(anchor) {
+  if (anchor === 'middle') {
+    return 'center';
+  }
+  if (anchor === 'end') {
+    return 'right';
+  }
+  return 'left';
+}
+
+function getVerticalTextAnchor(baseline) {
+  if (baseline === 'text-after-edge') {
+    return 'bottom';
+  }
+  if (baseline === 'middle') {
+    return 'middle';
+  }
+  return 'top';
+}
+
+function renderTextPathFallback(text, x, y, options) {
+  return renderMultilineText(text, x, y, options);
+}
+
+function renderPathText(text, x, y, options = {}) {
+  if (!dimensionTextToSvg) {
+    return renderTextPathFallback(text, x, y, options);
+  }
+
+  const lines = String(text || '').split('\n');
+  const className = options.className || 'dimension-text-path';
+  const fontSize = Number(options.fontSize) || DEFAULT_TEXT_STYLE.fontSize;
+  const lineHeight = Number(options.lineHeight) || Math.round(fontSize * 1.25);
+  const anchor = getHorizontalTextAnchor(options.anchor || 'start');
+  const verticalAnchor = getVerticalTextAnchor(options.baseline || 'middle');
+  const rotation = Number(options.rotation);
+  const transform = Number.isFinite(rotation) && rotation !== 0
+    ? ` transform="rotate(${rotation} ${x} ${y})"`
+    : '';
+  const totalHeight = Math.max(lines.length - 1, 0) * lineHeight;
+  let firstLineY = y;
+
+  if (verticalAnchor === 'middle') {
+    firstLineY = y - totalHeight / 2;
+  } else if (verticalAnchor === 'bottom') {
+    firstLineY = y - totalHeight;
+  }
+
+  const paths = lines.map((line, index) => {
+    const lineY = firstLineY + index * lineHeight;
+    const pathData = dimensionTextToSvg.getD(line, {
+      x,
+      y: lineY,
+      fontSize,
+      anchor: `${anchor} ${verticalAnchor}`
+    });
+    return `<path class="${className}" d="${escapeXml(pathData)}" />`;
+  }).join('');
+
+  return [
+    `<g class="${className}-group"${transform} data-text="${escapeXml(text)}">`,
+    `<title>${escapeXml(text)}</title>`,
+    paths,
+    '</g>'
+  ].join('');
 }
 
 function renderMultilineText(text, x, y, options = {}) {
@@ -59,20 +148,23 @@ function renderText(text) {
     : text.baseline === 'middle'
       ? 'middle'
       : 'text-before-edge';
-  return renderMultilineText(text.text, text.position.x, text.position.y, {
+  return renderPathText(text.text, text.position.x, text.position.y, {
     anchor,
     baseline,
-    className: 'dimension-text',
+    className: 'dimension-text-path',
+    fontSize: DEFAULT_TEXT_STYLE.fontSize,
+    lineHeight: DEFAULT_TEXT_STYLE.lineHeight,
     rotation: text.rotation || 0
   });
 }
 
 function renderTextOnly(annotation) {
-  return renderMultilineText(annotation.text, annotation.position.x, annotation.position.y, {
+  return renderPathText(annotation.text, annotation.position.x, annotation.position.y, {
     anchor: 'start',
-    baseline: 'middle',
-    className: 'dimension-text-only',
-    lineHeight: 30
+    baseline: 'top',
+    className: 'dimension-text-only-path',
+    fontSize: TEXT_ONLY_STYLE.fontSize,
+    lineHeight: TEXT_ONLY_STYLE.lineHeight
   });
 }
 
@@ -100,6 +192,9 @@ function renderDimensionSvgOverlay(renderPlan, options = {}) {
     '.dimension-text,.dimension-text-only{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:24px;font-weight:500;fill:#111;}',
     '.dimension-text{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round;}',
     '.dimension-text-only{font-size:26px;}',
+    '.dimension-text-path,.dimension-text-only-path{fill:#111;paint-order:stroke;stroke:#fff;stroke-linejoin:round;}',
+    '.dimension-text-path{stroke-width:4px;}',
+    '.dimension-text-only-path{stroke-width:0;}',
     '</style>',
     '</defs>',
     background,
