@@ -19,8 +19,12 @@ const SECRET_ID = process.env.CLOUDBASE_SECRET_ID;
 const SECRET_KEY = process.env.CLOUDBASE_SECRET_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
-const OPENAI_IMAGE_FALLBACK_MODEL = process.env.OPENAI_IMAGE_FALLBACK_MODEL
-  || (OPENAI_IMAGE_MODEL === 'gpt-image-1' ? '' : 'gpt-image-1');
+const OPENAI_IMAGE_FALLBACK_MODELS = parseCommaList(
+  process.env.OPENAI_IMAGE_FALLBACK_MODELS
+  || process.env.OPENAI_IMAGE_FALLBACK_MODEL
+  || (OPENAI_IMAGE_MODEL === 'gpt-image-1' ? 'dall-e-2' : 'gpt-image-1,dall-e-2')
+).filter((model) => model !== OPENAI_IMAGE_MODEL);
+const OPENAI_IMAGE_FALLBACK_MODEL = OPENAI_IMAGE_FALLBACK_MODELS[0] || '';
 const RAW_OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-5.5';
 const OPENAI_VISION_MODEL = normalizeVisionModelName(RAW_OPENAI_VISION_MODEL);
 const OPENAI_VISION_REASONING_EFFORT = process.env.OPENAI_VISION_REASONING_EFFORT || 'high';
@@ -80,6 +84,13 @@ function getSanitizedBaseUrl(value) {
 function normalizeVisionModelName(value) {
   const normalized = String(value || '').trim().replace(/\s+Thinking$/i, '').trim();
   return normalized || 'gpt-5.5';
+}
+
+function parseCommaList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function normalizeTaskType(job) {
@@ -3503,12 +3514,54 @@ function shouldRetryImageApi(error) {
   return /timeout|timed out|socket hang up|ECONNRESET|ETIMEDOUT|fetch failed/i.test(error.message || '');
 }
 
-function shouldFallbackImageModel(error) {
-  if (!OPENAI_IMAGE_FALLBACK_MODEL || OPENAI_IMAGE_FALLBACK_MODEL === OPENAI_IMAGE_MODEL) {
+function shouldTryNextImageModel(error, modelIndex, modelCandidates) {
+  if (!modelCandidates || modelIndex >= modelCandidates.length - 1) {
     return false;
   }
   const message = error && error.message ? error.message : '';
-  return error && error.status === 502 && /upstream access forbidden|access forbidden/i.test(message);
+  if (/upstream access forbidden|access forbidden|unsupported model|model.*not.*found|does not exist/i.test(message)) {
+    return true;
+  }
+  return !!(error && [500, 502, 503, 504].includes(Number(error.status)));
+}
+
+function isLegacySingleImageEditModel(model) {
+  return /^dall-e-2$/i.test(String(model || '').trim());
+}
+
+function getImageInputForModel(model, inputImages) {
+  if (isLegacySingleImageEditModel(model) && Array.isArray(inputImages)) {
+    return inputImages[0];
+  }
+  return inputImages;
+}
+
+function buildLegacyImageEditPrompt(prompt) {
+  const sourceText = String(prompt || '').replace(/\r/g, '\n');
+  const importantLines = sourceText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) {
+        return false;
+      }
+      return /用途|任务类型|门类型|目标部件|客户补充要求|结构化强制任务清单|颜色执行描述|包边执行描述|背景要求|把手|智能锁|锁体|包边|门头|门柱|玻璃|气窗|颜色|材质|纹理|白板/.test(line);
+    });
+  const condensed = importantLines.slice(0, 18).join('；');
+  const fallbackPrompt = [
+    '请对输入门图做局部真实图片编辑，保持门体比例、构图、透视、背景和未点名区域不变。',
+    '只改客户指定的门部件、颜色、材质、把手、锁体、包边、门头、门柱、玻璃或背景区域。',
+    '不要生成尺寸线、不要加文字、不要重画整张图。',
+    condensed || sourceText.replace(/\s+/g, ' ').slice(0, 700)
+  ].join(' ');
+  return fallbackPrompt.slice(0, 950);
+}
+
+function getPromptForImageModel(model, prompt) {
+  if (isLegacySingleImageEditModel(model)) {
+    return buildLegacyImageEditPrompt(prompt);
+  }
+  return prompt;
 }
 
 function summarizeOpenAIError(error) {
@@ -3524,7 +3577,7 @@ function summarizeOpenAIError(error) {
 
 async function requestEditedImage(jobId, inputImages, prompt, options) {
   const requestOptions = options || {};
-  const modelCandidates = [OPENAI_IMAGE_MODEL, OPENAI_IMAGE_FALLBACK_MODEL].filter((model, index, list) => (
+  const modelCandidates = [OPENAI_IMAGE_MODEL].concat(OPENAI_IMAGE_FALLBACK_MODELS).filter((model, index, list) => (
     model && list.indexOf(model) === index
   ));
   let lastError = null;
@@ -3542,16 +3595,17 @@ async function requestEditedImage(jobId, inputImages, prompt, options) {
           baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
           model: imageModel,
           primaryModel: OPENAI_IMAGE_MODEL,
-          fallbackModel: OPENAI_IMAGE_FALLBACK_MODEL || '',
+          fallbackModels: OPENAI_IMAGE_FALLBACK_MODELS,
+          legacySingleImageInput: isLegacySingleImageEditModel(imageModel),
           visionModel: OPENAI_VISION_MODEL,
           visionReasoningEffort: OPENAI_VISION_REASONING_EFFORT || 'none',
           timeoutMs: OPENAI_IMAGE_TIMEOUT_MS
         });
         const response = await openai.images.edit({
           model: imageModel,
-          image: inputImages,
+          image: getImageInputForModel(imageModel, inputImages),
           ...(requestOptions.mask ? { mask: requestOptions.mask } : {}),
-          prompt,
+          prompt: getPromptForImageModel(imageModel, prompt),
           size: '1024x1024'
         }, {
           timeout: OPENAI_IMAGE_TIMEOUT_MS
@@ -3583,11 +3637,11 @@ async function requestEditedImage(jobId, inputImages, prompt, options) {
           });
           continue;
         }
-        if (modelIndex === 0 && shouldFallbackImageModel(error)) {
+        if (shouldTryNextImageModel(error, modelIndex, modelCandidates)) {
           console.warn('[worker] retrying image api with fallback model', {
             jobId,
             failedModel: imageModel,
-            fallbackModel: OPENAI_IMAGE_FALLBACK_MODEL,
+            fallbackModel: modelCandidates[modelIndex + 1],
             requestID: errorSummary.requestID,
             message: errorSummary.message
           });
