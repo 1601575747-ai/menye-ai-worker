@@ -19,6 +19,8 @@ const SECRET_ID = process.env.CLOUDBASE_SECRET_ID;
 const SECRET_KEY = process.env.CLOUDBASE_SECRET_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
+const OPENAI_IMAGE_FALLBACK_MODEL = process.env.OPENAI_IMAGE_FALLBACK_MODEL
+  || (OPENAI_IMAGE_MODEL === 'gpt-image-1' ? '' : 'gpt-image-1');
 const RAW_OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-5.5';
 const OPENAI_VISION_MODEL = normalizeVisionModelName(RAW_OPENAI_VISION_MODEL);
 const OPENAI_VISION_REASONING_EFFORT = process.env.OPENAI_VISION_REASONING_EFFORT || 'high';
@@ -3501,6 +3503,14 @@ function shouldRetryImageApi(error) {
   return /timeout|timed out|socket hang up|ECONNRESET|ETIMEDOUT|fetch failed/i.test(error.message || '');
 }
 
+function shouldFallbackImageModel(error) {
+  if (!OPENAI_IMAGE_FALLBACK_MODEL || OPENAI_IMAGE_FALLBACK_MODEL === OPENAI_IMAGE_MODEL) {
+    return false;
+  }
+  const message = error && error.message ? error.message : '';
+  return error && error.status === 502 && /upstream access forbidden|access forbidden/i.test(message);
+}
+
 function summarizeOpenAIError(error) {
   return {
     name: error && error.name ? error.name : '',
@@ -3514,56 +3524,80 @@ function summarizeOpenAIError(error) {
 
 async function requestEditedImage(jobId, inputImages, prompt, options) {
   const requestOptions = options || {};
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const startedAt = Date.now();
-    try {
-      console.log('[worker] calling image api', {
-        jobId,
-        attempt,
-        imageCount: inputImages.length,
-        hasMask: !!requestOptions.mask,
-        baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
-        model: OPENAI_IMAGE_MODEL,
-        visionModel: OPENAI_VISION_MODEL,
-        visionReasoningEffort: OPENAI_VISION_REASONING_EFFORT || 'none',
-        timeoutMs: OPENAI_IMAGE_TIMEOUT_MS
-      });
-      const response = await openai.images.edit({
-        model: OPENAI_IMAGE_MODEL,
-        image: inputImages,
-        ...(requestOptions.mask ? { mask: requestOptions.mask } : {}),
-        prompt,
-        size: '1024x1024'
-      }, {
-        timeout: OPENAI_IMAGE_TIMEOUT_MS
-      });
-      console.log('[worker] image api returned', {
-        jobId,
-        attempt,
-        elapsedMs: Date.now() - startedAt
-      });
-      return response;
-    } catch (error) {
-      const errorSummary = summarizeOpenAIError(error);
-      console.warn('[worker] image api failed', {
-        jobId,
-        attempt,
-        elapsedMs: Date.now() - startedAt,
-        baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
-        model: OPENAI_IMAGE_MODEL,
-        ...errorSummary
-      });
-      if (attempt === 1 && shouldRetryImageApi(error)) {
-        console.warn('[worker] retrying image api after retryable error', {
+  const modelCandidates = [OPENAI_IMAGE_MODEL, OPENAI_IMAGE_FALLBACK_MODEL].filter((model, index, list) => (
+    model && list.indexOf(model) === index
+  ));
+  let lastError = null;
+
+  for (let modelIndex = 0; modelIndex < modelCandidates.length; modelIndex += 1) {
+    const imageModel = modelCandidates[modelIndex];
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const startedAt = Date.now();
+      try {
+        console.log('[worker] calling image api', {
           jobId,
-          requestID: errorSummary.requestID,
-          message: errorSummary.message
+          attempt,
+          imageCount: inputImages.length,
+          hasMask: !!requestOptions.mask,
+          baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
+          model: imageModel,
+          primaryModel: OPENAI_IMAGE_MODEL,
+          fallbackModel: OPENAI_IMAGE_FALLBACK_MODEL || '',
+          visionModel: OPENAI_VISION_MODEL,
+          visionReasoningEffort: OPENAI_VISION_REASONING_EFFORT || 'none',
+          timeoutMs: OPENAI_IMAGE_TIMEOUT_MS
         });
-        continue;
+        const response = await openai.images.edit({
+          model: imageModel,
+          image: inputImages,
+          ...(requestOptions.mask ? { mask: requestOptions.mask } : {}),
+          prompt,
+          size: '1024x1024'
+        }, {
+          timeout: OPENAI_IMAGE_TIMEOUT_MS
+        });
+        console.log('[worker] image api returned', {
+          jobId,
+          attempt,
+          model: imageModel,
+          elapsedMs: Date.now() - startedAt
+        });
+        return response;
+      } catch (error) {
+        lastError = error;
+        const errorSummary = summarizeOpenAIError(error);
+        console.warn('[worker] image api failed', {
+          jobId,
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          baseURL: getSanitizedBaseUrl(OPENAI_BASE_URL),
+          model: imageModel,
+          ...errorSummary
+        });
+        if (attempt === 1 && shouldRetryImageApi(error)) {
+          console.warn('[worker] retrying image api after retryable error', {
+            jobId,
+            model: imageModel,
+            requestID: errorSummary.requestID,
+            message: errorSummary.message
+          });
+          continue;
+        }
+        if (modelIndex === 0 && shouldFallbackImageModel(error)) {
+          console.warn('[worker] retrying image api with fallback model', {
+            jobId,
+            failedModel: imageModel,
+            fallbackModel: OPENAI_IMAGE_FALLBACK_MODEL,
+            requestID: errorSummary.requestID,
+            message: errorSummary.message
+          });
+          break;
+        }
+        throw error;
       }
-      throw error;
     }
   }
+  throw lastError || new Error('图片生成失败');
 }
 
 async function processJob(jobId) {
