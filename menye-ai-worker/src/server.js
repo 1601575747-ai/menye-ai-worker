@@ -3747,6 +3747,32 @@ function summarizeOpenAIError(error) {
   };
 }
 
+function getProviderErrorMessage(error) {
+  return error && error.message ? error.message : String(error || '');
+}
+
+function getWorkerErrorCode(error) {
+  const message = getProviderErrorMessage(error);
+  if (/upstream access forbidden|access forbidden/i.test(message)) {
+    return 'IMAGE_PROVIDER_UNAVAILABLE';
+  }
+  if (/timeout|timed out|ETIMEDOUT|ECONNRESET|socket hang up/i.test(message)) {
+    return 'IMAGE_PROVIDER_TIMEOUT';
+  }
+  return 'IMAGE_PROCESS_FAILED';
+}
+
+function getPublicWorkerErrorMessage(error) {
+  const message = getProviderErrorMessage(error);
+  if (/upstream access forbidden|access forbidden/i.test(message)) {
+    return 'AI 图片编辑服务暂时不可用，请稍后重试。';
+  }
+  if (/timeout|timed out|ETIMEDOUT|ECONNRESET|socket hang up/i.test(message)) {
+    return 'AI 图片编辑服务响应超时，请稍后重试。';
+  }
+  return message || '处理失败，请稍后再试';
+}
+
 async function requestEditedImage(jobId, inputImages, prompt, options) {
   const requestOptions = options || {};
   const modelCandidates = [OPENAI_IMAGE_MODEL].concat(OPENAI_IMAGE_FALLBACK_MODELS).filter((model, index, list) => (
@@ -4038,12 +4064,15 @@ const server = http.createServer(async (req, res) => {
       processJob(body.jobId).catch(async (error) => {
         console.error('[worker] processJob failed:', body.jobId, error);
         try {
+          const providerErrorMessage = getProviderErrorMessage(error);
           await updateJob(body.jobId, {
             status: 'failed',
             provider: 'openai-worker',
             providerStatus: 'failed',
-            errorMessage: error && error.message ? error.message : '处理失败，请稍后再试',
-            needsManualReview: /编辑区域|门把手/.test(error && error.message ? error.message : ''),
+            errorCode: getWorkerErrorCode(error),
+            errorMessage: getPublicWorkerErrorMessage(error),
+            providerErrorMessage,
+            needsManualReview: /编辑区域|门把手/.test(providerErrorMessage),
             updatedAt: Date.now()
           });
         } catch (updateError) {
