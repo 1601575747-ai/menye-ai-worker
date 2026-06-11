@@ -2745,6 +2745,17 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
         '允许门头/门柱因为阴影和凹凸产生合理明暗层次，但整体色相、冷暖、明度和饱和度必须归入同一目标色系，不能看起来像另一套深色门头柱。'
       ].join('\n')
     : '';
+  const finalColorCoverageInstruction = hasColorSample
+    ? [
+        '最终颜色覆盖自检：颜色参考图是最终颜色层来源。除非客户明确指定某个部件独立颜色，否则最终图不能只把中间门扇改色而留下门框、门套、包边、侧边、门头、门楣、门柱、立柱或外框装饰保持第一张整门图的旧深色/旧灰色。',
+        colorSampleAppliesToHeaderColumn
+          ? '本次同时有门头/门柱参考图和颜色参考图，门头/门柱/外框装饰必须先按门头/门柱参考图处理结构，再被颜色参考图统一校色；“门头/门柱参考图不是颜色参考图”不能被解释为门头/门柱不用跟随颜色参考图。'
+          : '',
+        edgeTrimColorProtectedFromColorSample
+          ? '包边存在独立颜色意图时，包边颜色按独立意图执行；但门扇/门体和没有独立颜色要求的其他门面区域仍必须按颜色参考图执行。'
+          : '包边没有独立颜色意图时，包边/门套/收口条/压线必须随门体按颜色参考图统一，不能保留旧包边颜色。'
+      ].filter(Boolean).join('\n')
+    : '';
   const singleDoorAdditionalPartInstruction = [
     hasLockDetail
       ? [
@@ -3072,6 +3083,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
     headerColumnColorUnificationInstruction,
     singleDoorAdditionalPartInstruction,
     additionalPartConflictResolutionInstruction,
+    finalColorCoverageInstruction,
     textColorInstruction,
     edgeTrimOnlyFreezeInstruction,
     structuredReferenceInstruction,
