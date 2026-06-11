@@ -3814,7 +3814,7 @@ async function requestEditedImage(jobId, inputImages, prompt, options) {
           visionReasoningEffort: OPENAI_VISION_REASONING_EFFORT || 'none',
           timeoutMs: OPENAI_IMAGE_TIMEOUT_MS
         });
-        const response = await openai.images.edit({
+        const response = await withTimeout(openai.images.edit({
           model: imageModel,
           image: getImageInputForModel(imageModel, inputImages),
           ...(requestOptions.mask ? { mask: requestOptions.mask } : {}),
@@ -3822,7 +3822,7 @@ async function requestEditedImage(jobId, inputImages, prompt, options) {
           size: '1024x1024'
         }, {
           timeout: OPENAI_IMAGE_TIMEOUT_MS
-        });
+        }), OPENAI_IMAGE_TIMEOUT_MS + 5000, '图片编辑接口');
         console.log('[worker] image api returned', {
           jobId,
           attempt,
