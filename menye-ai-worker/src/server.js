@@ -22,8 +22,8 @@ const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
 const OPENAI_IMAGE_FALLBACK_MODELS = parseCommaList(
   process.env.OPENAI_IMAGE_FALLBACK_MODELS
   || process.env.OPENAI_IMAGE_FALLBACK_MODEL
-  || (OPENAI_IMAGE_MODEL === 'gpt-image-1' ? 'dall-e-2' : 'gpt-image-1,dall-e-2')
-).filter((model) => model !== OPENAI_IMAGE_MODEL);
+  || (OPENAI_IMAGE_MODEL === 'gpt-image-1' ? '' : 'gpt-image-1')
+).filter((model) => model !== OPENAI_IMAGE_MODEL && !isLegacySingleImageEditModel(model));
 const OPENAI_IMAGE_FALLBACK_MODEL = OPENAI_IMAGE_FALLBACK_MODELS[0] || '';
 const RAW_OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-5.5';
 const OPENAI_VISION_MODEL = normalizeVisionModelName(RAW_OPENAI_VISION_MODEL);
@@ -34,6 +34,7 @@ const OPENAI_IMAGE_TIMEOUT_MS = Number(process.env.OPENAI_IMAGE_TIMEOUT_MS || OP
 const CLOUDBASE_TIMEOUT_MS = Number(process.env.CLOUDBASE_TIMEOUT_MS || 60000);
 const CLOUDBASE_UPLOAD_TIMEOUT_MS = Number(process.env.CLOUDBASE_UPLOAD_TIMEOUT_MS || 90000);
 const ENABLE_DIRECT_BACKGROUND_COMPOSITE = process.env.ENABLE_DIRECT_BACKGROUND_COMPOSITE === 'true';
+const ENABLE_DIRECT_HANDLE_COMPOSITE_FALLBACK = process.env.ENABLE_DIRECT_HANDLE_COMPOSITE_FALLBACK === 'true';
 const USE_NEW_DIMENSION_PIPELINE = process.env.USE_NEW_DIMENSION_PIPELINE === 'true';
 const WORKER_SHARED_SECRET = process.env.WORKER_SHARED_SECRET;
 const PORT = Number(process.env.PORT || 3000);
@@ -353,6 +354,12 @@ function getReferenceImages(job) {
           uploadedRef: item.uploadedRef || fileID
         };
       })
+    : [];
+}
+
+function getTargetPartKeys(job) {
+  return Array.isArray(job && job.targetParts)
+    ? job.targetParts.map((item) => String(item || '').trim()).filter(Boolean)
     : [];
 }
 
@@ -1700,6 +1707,162 @@ function inferLockMaskBox(size, lockBuffer, job) {
     right: centerX + (boxWidth / 2),
     bottom: centerY + (boxHeight / 2)
   }, size, isDoubleDoor ? 'lock-center-heuristic' : 'lock-side-heuristic');
+}
+
+function getDirectHandleTargetBox(size, job, maskBox) {
+  if (maskBox && !/heuristic/i.test(maskBox.source || '')) {
+    return maskBox;
+  }
+  if (!size || !size.width || !size.height) {
+    return null;
+  }
+  const isDoubleDoor = /双开|子母|四开|六开/.test(job && job.doorType || '');
+  const boxWidth = Math.max(Math.round(size.width * (isDoubleDoor ? 0.22 : 0.16)), isDoubleDoor ? 180 : 120);
+  const boxHeight = Math.max(Math.round(size.height * 0.34), 260);
+  const centerX = isDoubleDoor ? size.width * 0.5 : size.width * 0.72;
+  const centerY = size.height * (isDoubleDoor ? 0.62 : 0.56);
+  return normalizeMaskBox({
+    left: centerX - (boxWidth / 2),
+    top: centerY - (boxHeight / 2),
+    right: centerX + (boxWidth / 2),
+    bottom: centerY + (boxHeight / 2)
+  }, size, isDoubleDoor ? 'direct-handle-center-heuristic' : 'direct-handle-side-heuristic');
+}
+
+function getHeuristicReferenceHandleBox(size, job) {
+  if (!size || !size.width || !size.height) {
+    return null;
+  }
+  const isDoubleDoor = /双开|子母|四开|六开/.test(job && job.doorType || '');
+  const left = isDoubleDoor ? 0.36 : 0.54;
+  const right = isDoubleDoor ? 0.64 : 0.86;
+  return normalizeMaskBox({
+    left: size.width * left,
+    top: size.height * 0.48,
+    right: size.width * right,
+    bottom: size.height * 0.9
+  }, size, 'reference-handle-heuristic');
+}
+
+function getLuminance(data, index) {
+  return (data[index] * 0.299) + (data[index + 1] * 0.587) + (data[index + 2] * 0.114);
+}
+
+function getRawLuminanceStats(data, pixelCount) {
+  if (!data || !pixelCount) {
+    return { mean: 0, variance: 0, stddev: 0 };
+  }
+  let total = 0;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    total += getLuminance(data, pixel * 4);
+  }
+  const mean = total / pixelCount;
+  let varianceTotal = 0;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const delta = getLuminance(data, pixel * 4) - mean;
+    varianceTotal += delta * delta;
+  }
+  const variance = varianceTotal / pixelCount;
+  return { mean, variance, stddev: Math.sqrt(variance) };
+}
+
+async function buildBrightForegroundOverlay(referenceBuffer, referenceBox, targetBox) {
+  if (!sharp || !referenceBuffer || !referenceBox || !targetBox) {
+    return null;
+  }
+  const width = targetBox.width;
+  const height = targetBox.height;
+  const raw = await sharp(referenceBuffer)
+    .rotate()
+    .extract({
+      left: referenceBox.left,
+      top: referenceBox.top,
+      width: referenceBox.width,
+      height: referenceBox.height
+    })
+    .resize(width, height, { fit: 'fill' })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const channels = raw.info.channels;
+  if (channels < 4) {
+    return null;
+  }
+  const pixelCount = width * height;
+  const stats = getRawLuminanceStats(raw.data, pixelCount);
+  const threshold = Math.min(235, stats.mean + Math.max(26, stats.stddev * 0.55));
+  const output = Buffer.alloc(pixelCount * 4);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const sourceIndex = pixel * channels;
+    const targetIndex = pixel * 4;
+    const luminance = getLuminance(raw.data, sourceIndex);
+    const alpha = clamp(Math.round(((luminance - threshold) / 44) * 255), 0, 230);
+    output[targetIndex] = raw.data[sourceIndex];
+    output[targetIndex + 1] = raw.data[sourceIndex + 1];
+    output[targetIndex + 2] = raw.data[sourceIndex + 2];
+    output[targetIndex + 3] = alpha < 24 ? 0 : alpha;
+  }
+  return sharp(output, {
+    raw: {
+      width,
+      height,
+      channels: 4
+    }
+  }).png().toBuffer();
+}
+
+async function buildDirectHandleCompositeFallback(job, editArtifacts, error) {
+  if (!ENABLE_DIRECT_HANDLE_COMPOSITE_FALLBACK) {
+    return null;
+  }
+  if (!sharp || !editArtifacts || !editArtifacts.primaryBuffer || !editArtifacts.primarySize) {
+    return null;
+  }
+  const targetParts = getTargetPartKeys(job);
+  if (targetParts.length && !(targetParts.length === 1 && targetParts[0] === 'handle')) {
+    return null;
+  }
+  const handleDetail = editArtifacts.handleDetail;
+  const handleBuffer = editArtifacts.handleBuffer;
+  if (!handleDetail || !handleBuffer) {
+    return null;
+  }
+  const referenceSize = getImageSize(handleBuffer, handleDetail.originalImageFileID);
+  const referenceBox = getHeuristicReferenceHandleBox(referenceSize, job);
+  const targetBox = getDirectHandleTargetBox(editArtifacts.primarySize, job, editArtifacts.maskBox);
+  if (!referenceBox || !targetBox) {
+    return null;
+  }
+  const blurredPatch = await sharp(editArtifacts.primaryBuffer)
+    .rotate()
+    .extract({
+      left: targetBox.left,
+      top: targetBox.top,
+      width: targetBox.width,
+      height: targetBox.height
+    })
+    .blur(18)
+    .modulate({ brightness: 0.98 })
+    .png()
+    .toBuffer();
+  const overlay = await buildBrightForegroundOverlay(handleBuffer, referenceBox, targetBox);
+  if (!overlay) {
+    return null;
+  }
+  console.warn('[worker] using direct handle composite fallback after image api failure', {
+    jobId: job && (job._id || job.jobId),
+    targetBox,
+    referenceBox,
+    imageError: error && error.message ? error.message : String(error || '')
+  });
+  return sharp(editArtifacts.primaryBuffer)
+    .rotate()
+    .composite([
+      { input: blurredPatch, left: targetBox.left, top: targetBox.top },
+      { input: overlay, left: targetBox.left, top: targetBox.top }
+    ])
+    .png()
+    .toBuffer();
 }
 
 function sampleBoxToMaskBox(sampleBox, size, source) {
@@ -3174,7 +3337,9 @@ async function buildEditArtifacts(job) {
       inputImages: [await createInputImage(job.originalImageFileID, sourceBuffer, 'door-source.png')],
       maskFile: null,
       maskBox: null,
-      detectionMode: 'single-image-fallback'
+      detectionMode: 'single-image-fallback',
+      primaryBuffer: sourceBuffer,
+      primarySize: getImageSize(sourceBuffer, job.originalImageFileID)
     };
   }
 
@@ -3479,6 +3644,13 @@ async function buildEditArtifacts(job) {
     maskFile,
     maskBox,
     detectionMode,
+    primaryBuffer,
+    primarySize,
+    handleDetail,
+    handleBuffer,
+    lockDetail,
+    lockBuffer,
+    referenceBuffers,
     handleStyle,
     referenceStyles,
     dimensionBoxes,
@@ -3753,12 +3925,19 @@ async function processJob(jobId) {
       });
     }
   } else {
-    const response = await requestEditedImage(jobId, editArtifacts.inputImages, prompt, {
-      mask: editArtifacts.maskFile
-    });
-    console.log('[worker] received openai response', jobId);
-    resultBuffer = await readImageResponseBody(response);
-    console.log('[worker] parsed result buffer', jobId, resultBuffer.length);
+    try {
+      const response = await requestEditedImage(jobId, editArtifacts.inputImages, prompt, {
+        mask: editArtifacts.maskFile
+      });
+      console.log('[worker] received openai response', jobId);
+      resultBuffer = await readImageResponseBody(response);
+      console.log('[worker] parsed result buffer', jobId, resultBuffer.length);
+    } catch (error) {
+      resultBuffer = await buildDirectHandleCompositeFallback(job, editArtifacts, error);
+      if (!resultBuffer) {
+        throw error;
+      }
+    }
   }
   const resultImageFileID = await uploadResult(jobId, job.version || 1, resultBuffer);
   console.log('[worker] uploaded result image', jobId, resultImageFileID);
