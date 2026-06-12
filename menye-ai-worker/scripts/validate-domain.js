@@ -47,7 +47,8 @@ const {
   getPromptDecisionSummary,
   normalizeTaskType,
   shouldUseDirectBackgroundComposite,
-  inferLockMaskBox
+  inferLockMaskBox,
+  normalizeDimensionBoxes
 } = require('../src/server');
 const { JobStatus } = require('../src/jobs/status');
 const { ErrorCode } = require('../src/utils/errors');
@@ -606,6 +607,37 @@ const mockDoorStructure = Object.freeze({
   }),
   notes: ''
 });
+
+const dimensionBoxTestSize = Object.freeze({ width: 1000, height: 1000 });
+const legacyBothDimensionBoxes = normalizeDimensionBoxes({
+  outerTrimBox: { left: 80, top: 70, right: 920, bottom: 960 },
+  openingMidlineBox: { left: 300, top: 300, right: 700, bottom: 940 },
+  visibleOpeningBox: { left: 160, top: 150, right: 840, bottom: 940 },
+  doorBottomY: 950,
+  heightBottomMode: 'shared'
+}, dimensionBoxTestSize, {
+  hasDoorOpeningRequest: true,
+  hasVisibleOpeningRequest: true
+});
+assert.strictEqual(legacyBothDimensionBoxes.openingMidlineBox.left, 120);
+assert.strictEqual(legacyBothDimensionBoxes.openingMidlineBox.top, 110);
+assert.strictEqual(legacyBothDimensionBoxes.openingMidlineBox.right, 880);
+assert.strictEqual(legacyBothDimensionBoxes.openingMidlineBox.source, 'dimension-opening-request-aware-midline');
+
+const legacyOpeningOnlyDimensionBoxes = normalizeDimensionBoxes({
+  outerTrimBox: { left: 80, top: 70, right: 920, bottom: 960 },
+  openingMidlineBox: { left: 120, top: 110, right: 880, bottom: 940 },
+  visibleOpeningBox: { left: 160, top: 150, right: 840, bottom: 940 },
+  doorBottomY: 950,
+  heightBottomMode: 'shared'
+}, dimensionBoxTestSize, {
+  hasDoorOpeningRequest: true,
+  hasVisibleOpeningRequest: false
+});
+assert.strictEqual(legacyOpeningOnlyDimensionBoxes.openingMidlineBox.left, 160);
+assert.strictEqual(legacyOpeningOnlyDimensionBoxes.openingMidlineBox.top, 150);
+assert.strictEqual(legacyOpeningOnlyDimensionBoxes.openingMidlineBox.right, 840);
+assert.strictEqual(legacyOpeningOnlyDimensionBoxes.openingMidlineBox.source, 'dimension-opening-door-trim-connection');
 
 const normalizedInputs = normalizeDimensionInputs({
   openingWidth: '900mm',

@@ -2208,7 +2208,66 @@ function normalizeDimensionY(value, size) {
   return Math.max(0, Math.min(size.height, Math.round(number)));
 }
 
-function normalizeDimensionBoxes(parsed, size) {
+function hasDimensionBoxNumbers(box) {
+  return !!box &&
+    Number.isFinite(box.left) &&
+    Number.isFinite(box.top) &&
+    Number.isFinite(box.right) &&
+    Number.isFinite(box.bottom);
+}
+
+function getMidpointBoundaryCoordinate(outerValue, innerValue) {
+  return (Number(outerValue) + Number(innerValue)) / 2;
+}
+
+function getRequestAwareOpeningMidlineBox(boxes, dimensionData, size) {
+  if (!boxes || !dimensionData || !dimensionData.hasDoorOpeningRequest) {
+    return boxes && boxes.openingMidlineBox ? boxes.openingMidlineBox : null;
+  }
+  if (!hasDimensionBoxNumbers(boxes.visibleOpeningBox)) {
+    return boxes.openingMidlineBox || null;
+  }
+  if (!dimensionData.hasVisibleOpeningRequest) {
+    return normalizeDimensionBox(boxes.visibleOpeningBox, size, 'dimension-opening-door-trim-connection');
+  }
+  if (!hasDimensionBoxNumbers(boxes.outerTrimBox)) {
+    return boxes.openingMidlineBox || normalizeDimensionBox(boxes.visibleOpeningBox, size, 'dimension-opening-midline-fallback');
+  }
+
+  const outerTrim = boxes.outerTrimBox;
+  const visibleOpening = boxes.visibleOpeningBox;
+  const outerHeight = outerTrim.bottom - outerTrim.top;
+  const topGap = visibleOpening.top - outerTrim.top;
+  const existingTop = boxes.openingMidlineBox && Number.isFinite(boxes.openingMidlineBox.top)
+    ? boxes.openingMidlineBox.top
+    : null;
+  const hasDistinctTopStructure = topGap > Math.max(24, outerHeight * 0.12);
+  const top = hasDistinctTopStructure &&
+    existingTop !== null &&
+    existingTop > outerTrim.top &&
+    existingTop < visibleOpening.top
+    ? existingTop
+    : getMidpointBoundaryCoordinate(outerTrim.top, visibleOpening.top);
+
+  return normalizeDimensionBox({
+    left: getMidpointBoundaryCoordinate(outerTrim.left, visibleOpening.left),
+    top,
+    right: getMidpointBoundaryCoordinate(outerTrim.right, visibleOpening.right),
+    bottom: visibleOpening.bottom
+  }, size, 'dimension-opening-request-aware-midline');
+}
+
+function applyDimensionBoundaryRequestRules(boxes, dimensionData, size) {
+  if (!boxes) {
+    return null;
+  }
+  return {
+    ...boxes,
+    openingMidlineBox: getRequestAwareOpeningMidlineBox(boxes, dimensionData, size)
+  };
+}
+
+function normalizeDimensionBoxes(parsed, size, dimensionData) {
   if (!parsed || !size) {
     return null;
   }
@@ -2227,7 +2286,7 @@ function normalizeDimensionBoxes(parsed, size) {
   if (!result.outerTrimBox && !result.openingMidlineBox && !result.visibleOpeningBox && !result.headerOuterBox && result.doorBottomY === null) {
     return null;
   }
-  return result;
+  return applyDimensionBoundaryRequestRules(result, dimensionData, size);
 }
 
 async function detectDimensionBoxes(primaryBuffer, primaryFileID, size, job) {
@@ -2268,7 +2327,7 @@ async function detectDimensionBoxes(primaryBuffer, primaryFileID, size, job) {
         ]
       }
     ]));
-  return normalizeDimensionBoxes(extractJsonObject(response.output_text || ''), size);
+  return normalizeDimensionBoxes(extractJsonObject(response.output_text || ''), size, dimensionData);
 }
 
 async function detectReferenceStyle(referenceImage, referenceBuffer, job) {
@@ -4261,5 +4320,7 @@ module.exports = {
   getPromptDecisionSummary,
   normalizeTaskType,
   shouldUseDirectBackgroundComposite,
-  inferLockMaskBox
+  inferLockMaskBox,
+  normalizeDimensionBoxes,
+  applyDimensionBoundaryRequestRules
 };
