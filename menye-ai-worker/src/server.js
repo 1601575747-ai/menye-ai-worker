@@ -512,6 +512,16 @@ function getPromptDecisionSummary(job) {
   };
 }
 
+function shouldUseGlobalEditForHandleReference({ detailReferences, hasBackgroundReference } = {}) {
+  if (hasBackgroundReference) {
+    return true;
+  }
+  const details = Array.isArray(detailReferences)
+    ? detailReferences.filter((item) => item && item.slotId)
+    : [];
+  return details.length > 1;
+}
+
 function normalizeReferenceCode(value) {
   return String(value || '')
     .trim()
@@ -3608,9 +3618,12 @@ async function buildEditArtifacts(job) {
   let dimensionBoxes = null;
   const referenceStyles = [];
   const detectableReferenceSlotIds = getDetectableReferenceSlotIds();
-  const hasMultiPartReference = effectiveReferenceImages.some((item) => item && detectableReferenceSlotIds.includes(item.slotId));
   const effectiveDetailReferences = effectiveReferenceImages
     .filter((item) => item && item.slotId && item.slotId !== 'full-door' && item.slotId !== 'background-reference');
+  const shouldUseGlobalHandleEdit = shouldUseGlobalEditForHandleReference({
+    detailReferences: effectiveDetailReferences.filter((item) => detectableReferenceSlotIds.includes(item.slotId)),
+    hasBackgroundReference: !!backgroundReference
+  });
   const shouldBuildLockMask = !handleDetail && !!lockDetail && !backgroundReference &&
     effectiveDetailReferences.length === 1 && effectiveDetailReferences[0].slotId === 'lock-detail';
   if (normalizeTaskType(job) === 'dimension-annotation') {
@@ -3639,7 +3652,7 @@ async function buildEditArtifacts(job) {
     } catch (error) {
       console.warn('[worker] vision handle style detection failed', job._id || job.jobId, error && error.message ? error.message : error);
     }
-    if (hasMultiPartReference) {
+    if (shouldUseGlobalHandleEdit) {
       detectionMode = 'multi-part-reference-no-mask';
     } else {
       try {
@@ -4351,5 +4364,6 @@ module.exports = {
   inferLockMaskBox,
   normalizeDimensionBoxes,
   applyDimensionBoundaryRequestRules,
-  getImageModelCandidatesForInput
+  getImageModelCandidatesForInput,
+  shouldUseGlobalEditForHandleReference
 };

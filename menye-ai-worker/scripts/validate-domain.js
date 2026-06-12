@@ -49,7 +49,8 @@ const {
   shouldUseDirectBackgroundComposite,
   inferLockMaskBox,
   normalizeDimensionBoxes,
-  getImageModelCandidatesForInput
+  getImageModelCandidatesForInput,
+  shouldUseGlobalEditForHandleReference
 } = require('../src/server');
 const { JobStatus } = require('../src/jobs/status');
 const { ErrorCode } = require('../src/utils/errors');
@@ -267,6 +268,18 @@ assert.deepStrictEqual(getImageModelCandidatesForInput(['full-door', 'handle-det
   primaryModel: 'dall-e-2',
   fallbackModels: []
 }), []);
+assert.strictEqual(shouldUseGlobalEditForHandleReference({
+  detailReferences: [{ slotId: 'handle-detail' }],
+  hasBackgroundReference: false
+}), false);
+assert.strictEqual(shouldUseGlobalEditForHandleReference({
+  detailReferences: [{ slotId: 'handle-detail' }, { slotId: 'lock-detail' }],
+  hasBackgroundReference: false
+}), true);
+assert.strictEqual(shouldUseGlobalEditForHandleReference({
+  detailReferences: [{ slotId: 'handle-detail' }],
+  hasBackgroundReference: true
+}), true);
 
 assert.strictEqual(normalizeTaskType(multiPartPromptJob), 'parts-compose');
 const multiPartDecision = getPromptDecisionSummary(multiPartPromptJob);
