@@ -214,7 +214,7 @@ function getOpeningBoundaryBox({ field, doorStructure, hasVisibleOpeningRequest 
   };
 }
 
-function buildLineBoundary({ field, doorStructure, hasSameAxisVisibleOpeningRequest }) {
+function buildLineBoundary({ field, doorStructure, hasVisibleOpeningRequest }) {
   const boundaryConfig = FIELD_BOUNDARY_MAP[field];
   if (!boundaryConfig) {
     return {
@@ -226,7 +226,7 @@ function buildLineBoundary({ field, doorStructure, hasSameAxisVisibleOpeningRequ
   const openingBoundary = getOpeningBoundaryBox({
     field,
     doorStructure,
-    hasVisibleOpeningRequest: hasSameAxisVisibleOpeningRequest
+    hasVisibleOpeningRequest
   });
   let box = openingBoundary.box;
   let sourceBoxKey = openingBoundary.sourceBoxKey || boxKey;
@@ -331,6 +331,7 @@ function buildDimensionRules({ doorType, viewSide, inputs, doorStructure } = {})
     normalizedInputs.values,
     DimensionField.VISIBLE_OPENING_HEIGHT
   );
+  const hasVisibleOpeningRequest = hasVisibleOpeningWidthRequest || hasVisibleOpeningHeightRequest;
 
   for (const [field, normalizedInput] of Object.entries(normalizedInputs.values)) {
     if (!isDimensionFieldAllowed({ doorType: profile.key, viewSide, field })) {
@@ -349,11 +350,7 @@ function buildDimensionRules({ doorType, viewSide, inputs, doorStructure } = {})
     const boundary = buildLineBoundary({
       field,
       doorStructure,
-      hasSameAxisVisibleOpeningRequest: field === DimensionField.OPENING_WIDTH
-        ? hasVisibleOpeningWidthRequest
-        : field === DimensionField.OPENING_HEIGHT
-          ? hasVisibleOpeningHeightRequest
-          : false
+      hasVisibleOpeningRequest
     });
     if (boundary.issue) {
       issues.push(boundary.issue);

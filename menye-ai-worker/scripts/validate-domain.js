@@ -681,9 +681,9 @@ const openingHeightWithVisibleWidthOnly = buildDimensionRules({
 });
 const mixedAxisOpeningHeightRule = openingHeightWithVisibleWidthOnly.rules.find((rule) => rule.field === 'openingHeight');
 assert(mixedAxisOpeningHeightRule);
-assert.strictEqual(mixedAxisOpeningHeightRule.sourceBoundary.box, 'visibleOpening');
-assert.strictEqual(mixedAxisOpeningHeightRule.sourceBoundary.boundaryMode, 'doorTrimConnection');
-assert.strictEqual(mixedAxisOpeningHeightRule.sourceBoundary.from.value, mockDoorStructure.boxes.visibleOpening.top);
+assert.strictEqual(mixedAxisOpeningHeightRule.sourceBoundary.box, 'openingEdgeTrimMidline');
+assert.strictEqual(mixedAxisOpeningHeightRule.sourceBoundary.boundaryMode, 'edgeTrimMidline');
+assert.strictEqual(mixedAxisOpeningHeightRule.sourceBoundary.from.value, 110);
 
 const openingWidthWithVisibleHeightOnly = buildDimensionRules({
   doorType: '单开门',
@@ -696,9 +696,9 @@ const openingWidthWithVisibleHeightOnly = buildDimensionRules({
 });
 const mixedAxisOpeningWidthRule = openingWidthWithVisibleHeightOnly.rules.find((rule) => rule.field === 'openingWidth');
 assert(mixedAxisOpeningWidthRule);
-assert.strictEqual(mixedAxisOpeningWidthRule.sourceBoundary.box, 'visibleOpening');
-assert.strictEqual(mixedAxisOpeningWidthRule.sourceBoundary.boundaryMode, 'doorTrimConnection');
-assert.strictEqual(mixedAxisOpeningWidthRule.sourceBoundary.from.value, mockDoorStructure.boxes.visibleOpening.left);
+assert.strictEqual(mixedAxisOpeningWidthRule.sourceBoundary.box, 'openingEdgeTrimMidline');
+assert.strictEqual(mixedAxisOpeningWidthRule.sourceBoundary.boundaryMode, 'edgeTrimMidline');
+assert.strictEqual(mixedAxisOpeningWidthRule.sourceBoundary.from.value, 120);
 
 const wallOnly = buildDimensionRules({
   doorType: 'single',
@@ -1382,6 +1382,26 @@ assert(pipelineResult.metadata.rules.some((rule) => rule.field === 'openingWidth
 assert.strictEqual(pipelineResult.renderPlan.lines.length, 1);
 assert.strictEqual(pipelineResult.renderPlan.textOnlyAnnotations.length, 1);
 assert(['frontend-render-plan', 'sharp-svg-overlay'].includes(pipelineResult.rendererType));
+
+const mixedVisibilityPipelineResult = await runDimensionAnnotationPipeline({
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  doorType: '单开门',
+  dimensionViewSide: 'front',
+  dimensionValues: {
+    openingHeight: '2200',
+    visibleOpeningWidth: '800'
+  },
+  imageSize,
+  dimensionWhiteBackground: false,
+  analyzerMode: 'mock'
+});
+assert.strictEqual(mixedVisibilityPipelineResult.status, JobStatus.SUCCEEDED);
+const mixedPipelineOpeningHeightRule = mixedVisibilityPipelineResult.metadata.rules
+  .find((rule) => rule.field === 'openingHeight');
+assert(mixedPipelineOpeningHeightRule);
+assert.strictEqual(mixedPipelineOpeningHeightRule.sourceBoundary.box, 'openingEdgeTrimMidline');
+assert.strictEqual(mixedPipelineOpeningHeightRule.sourceBoundary.boundaryMode, 'edgeTrimMidline');
+assert.strictEqual(mixedPipelineOpeningHeightRule.sourceBoundary.from.value, 110);
 
 clearJobsForTest();
 clearArtifactsForTest();
