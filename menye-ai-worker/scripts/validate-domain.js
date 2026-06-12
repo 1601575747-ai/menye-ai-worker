@@ -589,6 +589,21 @@ const mockDoor = mockAnalyzer({
 assert.strictEqual(mockDoor.doorType, 'double');
 assert.strictEqual(mockDoor.viewSide, 'back');
 
+const syntheticDoubleDoorImage = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="240" height="320"><rect width="240" height="320" fill="#fff"/><rect x="40" y="20" width="160" height="285" fill="#4b4b4b"/><rect x="54" y="48" width="132" height="245" fill="#6d6d6d"/><rect x="62" y="64" width="58" height="220" fill="#777"/><rect x="120" y="64" width="58" height="220" fill="#777"/><line x1="120" y1="64" x2="120" y2="284" stroke="#333" stroke-width="3"/></svg>');
+const syntheticDoubleDoor = await analyzeDoor({
+  image: syntheticDoubleDoorImage,
+  imageSize: { width: 240, height: 320 },
+  doorType: 'double',
+  viewSide: 'front',
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  mode: 'heuristic'
+});
+const syntheticOpeningWidth = syntheticDoubleDoor.boxes.opening.right - syntheticDoubleDoor.boxes.opening.left;
+const syntheticVisibleWidth = syntheticDoubleDoor.boxes.visibleOpening.right - syntheticDoubleDoor.boxes.visibleOpening.left;
+assert(syntheticVisibleWidth >= syntheticOpeningWidth * 0.95);
+assert(Math.abs(syntheticDoubleDoor.boxes.visibleOpening.left - syntheticDoubleDoor.boxes.opening.left) <= 3);
+assert(Math.abs(syntheticDoubleDoor.boxes.visibleOpening.right - syntheticDoubleDoor.boxes.opening.right) <= 3);
+
 const analyzerRules = buildDimensionRules({
   doorType: mockDoor.doorType,
   viewSide: mockDoor.viewSide,

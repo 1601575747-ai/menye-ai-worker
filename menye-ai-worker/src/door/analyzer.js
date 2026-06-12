@@ -453,6 +453,37 @@ function hasNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function isMultiLeafDoorType(doorType) {
+  return ['double', 'motherChild', 'fourMotherChild', 'fourEqual', 'sixPanel'].includes(normalizeDoorType(doorType));
+}
+
+function refineOuterTrimTopForSceneImage(outerTrim, openingTop, imageHeight, doorType, features) {
+  if (!outerTrim || !hasNumber(openingTop) || !hasNumber(imageHeight) || imageHeight <= 0 || (features && features.plainBackground)) {
+    return outerTrim;
+  }
+  const height = outerTrim.bottom - outerTrim.top;
+  if (height <= 0) {
+    return outerTrim;
+  }
+  const topTouchesImage = outerTrim.top <= imageHeight * 0.02;
+  const excessiveHeadroom = openingTop - outerTrim.top > height * 0.18;
+  if (!topTouchesImage || !excessiveHeadroom) {
+    return outerTrim;
+  }
+  const reserveRatio = isMultiLeafDoorType(doorType) ? 0.16 : 0.12;
+  const maxTop = openingTop - Math.max(8, height * 0.04);
+  const refinedTop = clamp(Math.round(openingTop - height * reserveRatio), 0, maxTop);
+  if (refinedTop <= outerTrim.top) {
+    return outerTrim;
+  }
+  return normalizeBox({
+    left: outerTrim.left,
+    top: refinedTop,
+    right: outerTrim.right,
+    bottom: outerTrim.bottom
+  }) || outerTrim;
+}
+
 function median(values) {
   if (!values.length) {
     return 0;
@@ -904,9 +935,10 @@ function chooseNextRowAfter(horizontalScores, start, end, fallback) {
   return chosen.found ? chosen.index : Math.round(fallback);
 }
 
-function makeImageDrivenBoxes(features, analysisSize, outerTrim) {
+function makeImageDrivenBoxes(features, analysisSize, outerTrim, doorType) {
   const width = outerTrim.right - outerTrim.left;
   const height = outerTrim.bottom - outerTrim.top;
+  const multiLeaf = isMultiLeafDoorType(doorType);
   const verticalTop = outerTrim.top + height * 0.24;
   const verticalBottom = outerTrim.bottom - height * 0.055;
   const verticalScores = scoreVerticalEdges(features, analysisSize.width, analysisSize.height, verticalTop, verticalBottom);
@@ -932,22 +964,33 @@ function makeImageDrivenBoxes(features, analysisSize, outerTrim) {
     outerTrim.right - width * 0.055,
     { minScore: 3.5 }
   );
-  const connectionLeft = chooseEdgeNearTarget(
-    verticalScores,
-    outerTrim.left + width * 0.12,
-    outerTrim.left + width * 0.22,
-    outerTrim.left + width * 0.145,
-    { minScore: 2.8 }
-  );
-  const connectionRight = chooseEdgeNearTarget(
-    verticalScores,
-    outerTrim.right - width * 0.18,
-    outerTrim.right - width * 0.075,
-    outerTrim.right - width * 0.11,
-    { minScore: 3.2 }
-  );
+  const connectionLeft = multiLeaf
+    ? openingLeft
+    : chooseEdgeNearTarget(
+      verticalScores,
+      outerTrim.left + width * 0.12,
+      outerTrim.left + width * 0.22,
+      outerTrim.left + width * 0.145,
+      { minScore: 2.8 }
+    );
+  const connectionRight = multiLeaf
+    ? openingRight
+    : chooseEdgeNearTarget(
+      verticalScores,
+      outerTrim.right - width * 0.18,
+      outerTrim.right - width * 0.075,
+      outerTrim.right - width * 0.11,
+      { minScore: 3.2 }
+    );
 
   const openingTop = chooseOpeningTopRow(horizontalScores, outerTrim);
+  const effectiveOuterTrim = refineOuterTrimTopForSceneImage(
+    outerTrim,
+    openingTop,
+    analysisSize.height,
+    doorType,
+    features
+  );
   const visibleTop = chooseNextRowAfter(
     horizontalScores,
     openingTop + height * 0.012,
@@ -976,7 +1019,7 @@ function makeImageDrivenBoxes(features, analysisSize, outerTrim) {
   const topBandBottom = Math.max(openingTop, outerTrim.top + height * 0.12);
 
   return {
-    outerTrim,
+    outerTrim: effectiveOuterTrim,
     opening,
     visibleOpening,
     doorLeaf,
@@ -989,13 +1032,13 @@ function makeImageDrivenBoxes(features, analysisSize, outerTrim) {
     lock: null,
     transom: normalizeBox({
       left: opening.left,
-      top: outerTrim.top,
+      top: effectiveOuterTrim.top,
       right: opening.right,
       bottom: topBandBottom
     }),
     header: normalizeBox({
       left: outerTrim.left,
-      top: outerTrim.top,
+      top: effectiveOuterTrim.top,
       right: outerTrim.right,
       bottom: outerTrim.bottom
     }),
@@ -1017,11 +1060,12 @@ function scaleBoxes(boxes, scaleX, scaleY, maxWidth, maxHeight) {
   return result;
 }
 
-function makeHeuristicBoxes(outerTrim, imageSize) {
+function makeHeuristicBoxes(outerTrim, imageSize, doorType) {
   const width = outerTrim.right - outerTrim.left;
   const height = outerTrim.bottom - outerTrim.top;
+  const multiLeaf = isMultiLeafDoorType(doorType);
   const openingInsetX = Math.max(8, Math.round(width * 0.055));
-  const visibleInsetX = Math.max(18, Math.round(width * 0.145));
+  const visibleInsetX = multiLeaf ? openingInsetX : Math.max(18, Math.round(width * 0.145));
   const openingTopInset = Math.max(10, Math.round(height * 0.075));
   const visibleTopInset = Math.max(16, Math.round(height * 0.12));
   const lowerInset = Math.max(2, Math.round(height * 0.012));
@@ -1096,7 +1140,7 @@ async function heuristicAnalyzer({ image, imageSize, doorType, viewSide } = {}) 
     const scaleY = sourceSize.height / analysisSize.height;
     const boxes = analysisOuterTrim
       ? scaleBoxes(
-        makeImageDrivenBoxes(features, analysisSize, analysisOuterTrim),
+        makeImageDrivenBoxes(features, analysisSize, analysisOuterTrim, doorType),
         scaleX,
         scaleY,
         sourceSize.width,
@@ -1107,7 +1151,7 @@ async function heuristicAnalyzer({ image, imageSize, doorType, viewSide } = {}) 
         top: vertical.top,
         right: horizontal.right,
         bottom: vertical.bottom
-      }, scaleX, scaleY, sourceSize.width, sourceSize.height), sourceSize);
+      }, scaleX, scaleY, sourceSize.width, sourceSize.height), sourceSize, doorType);
     const outerTrim = boxes.outerTrim;
 
     return normalizeDoorStructure({
