@@ -473,6 +473,9 @@ function getPromptDecisionSummary(job) {
   const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
   const referenceImages = getReferenceImages(job);
   const hasEdgeTrimDetail = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail');
+  const hasHeaderColumnDetail = referenceImages.some((item) => item && item.slotId === 'header-column-detail');
+  const hasGlassGrilleDetail = referenceImages.some((item) => item && item.slotId === 'glass-grille-detail');
+  const hasBackgroundReference = referenceImages.some((item) => item && item.slotId === 'background-reference');
   const hasColorSample = referenceImages.some((item) => item && item.slotId === 'color-sample');
   const userSelectedEdgeTrimReferenceColor = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail' && item.colorMode === 'reference');
   const userWantsEdgeTrimDoorColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:同门|跟门|与门|和门|门体|门扇|整门)[^。；，,.]{0,24}(?:同色|一样|一致|统一)|(?:门体|门扇|整门)[^。；，,.]{0,24}(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:同色|一样|一致|统一)/.test(requirementText);
@@ -480,11 +483,17 @@ function getPromptDecisionSummary(job) {
   const userWantsEdgeTrimReferenceColor = userSelectedEdgeTrimReferenceColor || /(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:按|跟随|参考|保留|保持|使用|用)[^。；，,.]{0,28}(?:包边参考图|参考图|原图)[^。；，,.]{0,16}(?:颜色|色|固有色)|(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:不要|不跟|不同|独立|单独|另外|另做)[^。；，,.]{0,28}(?:同门|跟门|门体|门扇|整门|同色|统一|颜色|色)/.test(requirementText);
   const userWantsEdgeTrimPreserveColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:颜色|色|原色|本色|自身颜色|当前颜色|现在颜色)[^。；，,.]{0,16}(?:保持不变|不变|别变|不要变|不能变|保留|维持|锁定|不改|不要改|原样)|(?:保持不变|不变|别变|不要变|不能变|保留|维持|锁定|不改|不要改|原样)[^。；，,.]{0,24}(?:包边|门套|收口|压线)[^。；，,.]{0,16}(?:颜色|色|原色|本色|自身颜色|当前颜色|现在颜色)|(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:保留|保持|用|使用)[^。；，,.]{0,16}(?:原色|本色|自身颜色|当前颜色|现在颜色|原包边颜色)/.test(requirementText);
   const userWantsIndependentEdgeTrimColor = !userWantsEdgeTrimDoorColor && (userSpecifiedEdgeTrimColor || userWantsEdgeTrimReferenceColor || userWantsEdgeTrimPreserveColor);
+  const userWantsIndependentHeaderColumnColor = /(?:门头|门楣|门柱|立柱|罗马柱|外框)[^。；，,.]{0,28}(?:单独|独立|不要同门|不跟门|不同色|另外|另做|按参考图颜色|用参考图颜色|保持原色|颜色保持不变|颜色不变)|(?:单独|独立|不要同门|不跟门|不同色|另外|另做)[^。；，,.]{0,28}(?:门头|门楣|门柱|立柱|罗马柱|外框)/.test(requirementText);
   const allowDoorSurfaceColorChange = hasColorSample || hasDoorSurfaceColorTextRequest(job);
   return {
     requirementText,
     backgroundInfo,
     hasEdgeTrimDetail,
+    hasUploadedEdgeTrimDetail: hasEdgeTrimDetail,
+    hasEffectiveEdgeTrimDetail: hasEdgeTrimDetail && !hasHeaderColumnDetail,
+    hasHeaderColumnDetail,
+    hasGlassGrilleDetail,
+    hasBackgroundReference,
     hasColorSample,
     userSelectedEdgeTrimReferenceColor,
     userWantsEdgeTrimDoorColor,
@@ -495,6 +504,10 @@ function getPromptDecisionSummary(job) {
     userWantsIndependentEdgeTrimColor,
     edgeTrimColorProtectedFromColorSample: hasEdgeTrimDetail && userWantsIndependentEdgeTrimColor,
     colorSampleAppliesToEdgeTrim: hasColorSample && !(hasEdgeTrimDetail && userWantsIndependentEdgeTrimColor),
+    userWantsIndependentHeaderColumnColor,
+    headerColumnColorProtectedFromColorSample: hasHeaderColumnDetail && userWantsIndependentHeaderColumnColor,
+    colorSampleAppliesToHeaderColumn: hasColorSample && hasHeaderColumnDetail && !userWantsIndependentHeaderColumnColor,
+    glassGrilleColorIsLocalOnly: hasGlassGrilleDetail,
     allowDoorSurfaceColorChange
   };
 }

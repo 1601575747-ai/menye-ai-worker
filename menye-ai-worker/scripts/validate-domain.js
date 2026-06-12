@@ -257,6 +257,13 @@ assert.strictEqual(normalizeTaskType(multiPartPromptJob), 'parts-compose');
 const multiPartDecision = getPromptDecisionSummary(multiPartPromptJob);
 assert.strictEqual(multiPartDecision.hasColorSample, true);
 assert.strictEqual(multiPartDecision.colorSampleAppliesToEdgeTrim, true);
+assert.strictEqual(multiPartDecision.hasUploadedEdgeTrimDetail, true);
+assert.strictEqual(multiPartDecision.hasEffectiveEdgeTrimDetail, false);
+assert.strictEqual(multiPartDecision.hasHeaderColumnDetail, true);
+assert.strictEqual(multiPartDecision.hasGlassGrilleDetail, true);
+assert.strictEqual(multiPartDecision.userWantsIndependentHeaderColumnColor, false);
+assert.strictEqual(multiPartDecision.colorSampleAppliesToHeaderColumn, true);
+assert.strictEqual(multiPartDecision.glassGrilleColorIsLocalOnly, true);
 const multiPartPrompt = buildDoorImageInstruction(multiPartPromptJob, null, null, [
   { slotId: 'header-column-detail', label: '门头/门柱', color: '深灰色', applyDescription: '迁移门头门柱结构' },
   { slotId: 'edge-trim-detail', label: '包边', color: '红棕色', applyDescription: '迁移包边结构' },
@@ -287,6 +294,31 @@ assert(multiPartPrompt.includes('最终颜色覆盖自检'));
 assert(multiPartPrompt.includes('门头/门柱/外框装饰必须先按门头/门柱参考图处理结构，再被颜色参考图统一校色'));
 assert(!multiPartPrompt.includes('系统识别到包边参考图特征'));
 assert(!multiPartPrompt.includes('包边：必须识别包边参考图'));
+
+const independentHeaderColorJob = Object.freeze({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '双开门',
+  requirement: '门头门柱按参考图颜色，门体按颜色参考图',
+  referenceImages: Object.freeze([
+    Object.freeze({ slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' }),
+    Object.freeze({ slotId: 'header-column-detail', originalImageFileID: 'cloud://mock/header.png' }),
+    Object.freeze({ slotId: 'color-sample', originalImageFileID: 'cloud://mock/color.png' })
+  ])
+});
+const independentHeaderDecision = getPromptDecisionSummary(independentHeaderColorJob);
+assert.strictEqual(independentHeaderDecision.hasHeaderColumnDetail, true);
+assert.strictEqual(independentHeaderDecision.hasColorSample, true);
+assert.strictEqual(independentHeaderDecision.userWantsIndependentHeaderColumnColor, true);
+assert.strictEqual(independentHeaderDecision.headerColumnColorProtectedFromColorSample, true);
+assert.strictEqual(independentHeaderDecision.colorSampleAppliesToHeaderColumn, false);
+const independentHeaderPrompt = buildDoorImageInstruction(independentHeaderColorJob, null, null, [
+  { slotId: 'header-column-detail', label: '门头/门柱', color: '深灰色', applyDescription: '迁移门头门柱结构和参考色' },
+  { slotId: 'color-sample', label: '门体颜色', color: '浅木色', colorFamily: '木色', applyDescription: '统一门体浅木色' }
+], null);
+assert(!independentHeaderPrompt.includes('最高优先级门头/门柱同色规则'));
+assert(independentHeaderPrompt.includes('门头/门柱参考图中的颜色只允许作用到门头/门柱/外框装饰自身'));
+assert(independentHeaderPrompt.includes('颜色参考图是最终颜色层来源'));
 
 const motherChildPrompt = buildDoorImageInstruction({
   taskType: 'parts-compose',
@@ -374,6 +406,70 @@ assert.strictEqual(shouldUseDirectBackgroundComposite({
     { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' }
   ]
 }), false);
+
+const backgroundLockColorJob = {
+  taskType: 'scene-effect',
+  templateType: '场景效果图',
+  doorType: '双开门',
+  targetParts: ['background', 'lock', 'door-color'],
+  requirement: '背景按参考图，门体颜色按色卡，智能锁也换掉',
+  referenceImages: [
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' },
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'lock-detail', originalImageFileID: 'cloud://mock/lock.png' },
+    { slotId: 'color-sample', originalImageFileID: 'cloud://mock/color.png' }
+  ]
+};
+assert.strictEqual(shouldUseDirectBackgroundComposite(backgroundLockColorJob), false);
+const backgroundLockColorDecision = getPromptDecisionSummary(backgroundLockColorJob);
+assert.strictEqual(backgroundLockColorDecision.hasBackgroundReference, true);
+assert.strictEqual(backgroundLockColorDecision.hasColorSample, true);
+assert.strictEqual(backgroundLockColorDecision.allowDoorSurfaceColorChange, true);
+const backgroundLockColorPrompt = buildDoorImageInstruction(backgroundLockColorJob, {
+  source: 'background-doorway-test',
+  left: 120,
+  top: 80,
+  right: 860,
+  bottom: 980
+}, null, [
+  { slotId: 'background-reference', label: '背景', applyDescription: '以背景门位为最终画布' },
+  { slotId: 'lock-detail', label: '锁体/智能锁', lockIntegrationType: 'standalone', hasSmartLockPanel: true, applyDescription: '替换智能锁' },
+  { slotId: 'color-sample', label: '颜色', color: '浅木色', colorFamily: '木色', applyDescription: '统一浅木色' }
+], null);
+assert(backgroundLockColorPrompt.includes('输入图1是背景参考图'));
+assert(backgroundLockColorPrompt.includes('输入图2是整门上下文图'));
+assert(backgroundLockColorPrompt.includes('最终结果应等于：输入图1背景底图 + 输入图2整门抠图贴入输入图1的 mask 门位区域'));
+assert(backgroundLockColorPrompt.includes('锁体/智能锁：必须'));
+assert(backgroundLockColorPrompt.includes('结构化需求确认：客户上传了锁体/智能锁细节图'));
+assert(backgroundLockColorPrompt.includes('结构化需求确认：客户上传了颜色参考图'));
+
+const backgroundHeaderIndependentPrompt = buildDoorImageInstruction({
+  taskType: 'scene-effect',
+  templateType: '场景效果图',
+  doorType: '双开门',
+  targetParts: ['background', 'header-column', 'door-color'],
+  requirement: '背景按参考图，门体按色卡，门头门柱按参考图颜色',
+  referenceImages: [
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' },
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'header-column-detail', originalImageFileID: 'cloud://mock/header.png' },
+    { slotId: 'color-sample', originalImageFileID: 'cloud://mock/color.png' }
+  ]
+}, {
+  source: 'background-doorway-test',
+  left: 120,
+  top: 80,
+  right: 860,
+  bottom: 980
+}, null, [
+  { slotId: 'background-reference', label: '背景', applyDescription: '以背景门位为最终画布' },
+  { slotId: 'header-column-detail', label: '门头/门柱', color: '深灰色', applyDescription: '迁移门头结构' },
+  { slotId: 'color-sample', label: '颜色', color: '浅木色', colorFamily: '木色', applyDescription: '统一浅木色' }
+], null);
+assert(backgroundHeaderIndependentPrompt.includes('背景参考图只提供背景底图、目标门位、透视、接地和光影参考'));
+assert(backgroundHeaderIndependentPrompt.includes('门头/门柱：必须'));
+assert(backgroundHeaderIndependentPrompt.includes('门头/门柱参考图中的颜色只允许作用到门头/门柱/外框装饰自身'));
+assert(!backgroundHeaderIndependentPrompt.includes('最高优先级门头/门柱同色规则'));
 
 const handleReferencePrompt = buildDoorImageInstruction({
   taskType: 'handle-replacement',
