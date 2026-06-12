@@ -48,7 +48,8 @@ const {
   normalizeTaskType,
   shouldUseDirectBackgroundComposite,
   inferLockMaskBox,
-  normalizeDimensionBoxes
+  normalizeDimensionBoxes,
+  getImageModelCandidatesForInput
 } = require('../src/server');
 const { JobStatus } = require('../src/jobs/status');
 const { ErrorCode } = require('../src/utils/errors');
@@ -253,6 +254,20 @@ const multiPartPromptJob = Object.freeze({
     Object.freeze({ slotId: 'middle-join-detail', originalImageFileID: 'cloud://mock/join.png' })
   ])
 });
+
+assert.deepStrictEqual(getImageModelCandidatesForInput(['full-door'], {
+  primaryModel: 'dall-e-2',
+  fallbackModels: ['gpt-image-1']
+}), ['dall-e-2', 'gpt-image-1']);
+assert.deepStrictEqual(getImageModelCandidatesForInput(['full-door', 'handle-detail'], {
+  primaryModel: 'dall-e-2',
+  fallbackModels: ['gpt-image-1']
+}), ['gpt-image-1']);
+assert.deepStrictEqual(getImageModelCandidatesForInput(['full-door', 'handle-detail'], {
+  primaryModel: 'dall-e-2',
+  fallbackModels: []
+}), []);
+
 assert.strictEqual(normalizeTaskType(multiPartPromptJob), 'parts-compose');
 const multiPartDecision = getPromptDecisionSummary(multiPartPromptJob);
 assert.strictEqual(multiPartDecision.hasColorSample, true);

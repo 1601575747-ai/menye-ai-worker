@@ -3928,6 +3928,20 @@ function isLegacySingleImageEditModel(model) {
   return /^dall-e-2$/i.test(String(model || '').trim());
 }
 
+function getImageModelCandidatesForInput(inputImages, options = {}) {
+  const primaryModel = options.primaryModel || OPENAI_IMAGE_MODEL;
+  const fallbackModels = Array.isArray(options.fallbackModels)
+    ? options.fallbackModels
+    : OPENAI_IMAGE_FALLBACK_MODELS;
+  const sourceCandidates = [primaryModel].concat(fallbackModels || []);
+  const requiresMultiImageInput = Array.isArray(inputImages) && inputImages.length > 1;
+  return sourceCandidates.filter((model, index, list) => (
+    model &&
+    list.indexOf(model) === index &&
+    !(requiresMultiImageInput && isLegacySingleImageEditModel(model))
+  ));
+}
+
 function getImageInputForModel(model, inputImages) {
   if (isLegacySingleImageEditModel(model) && Array.isArray(inputImages)) {
     return inputImages[0];
@@ -3944,7 +3958,7 @@ function buildLegacyImageEditPrompt(prompt) {
       if (!line) {
         return false;
       }
-      return /用途|任务类型|门类型|目标部件|客户补充要求|结构化强制任务清单|颜色执行描述|包边执行描述|背景要求|把手|智能锁|锁体|包边|门头|门柱|玻璃|气窗|颜色|材质|纹理|白板/.test(line);
+      return /用途|任务类型|门类型|目标部件|客户补充要求|结构化强制任务清单|并列关系|不要只执行|颜色执行描述|包边执行描述|背景要求|把手|智能锁|锁体|包边|门头|门柱|玻璃|气窗|颜色|材质|纹理|白板/.test(line);
     });
   const condensed = importantLines.slice(0, 18).join('；');
   const fallbackPrompt = [
@@ -4002,9 +4016,10 @@ function getPublicWorkerErrorMessage(error) {
 
 async function requestEditedImage(jobId, inputImages, prompt, options) {
   const requestOptions = options || {};
-  const modelCandidates = [OPENAI_IMAGE_MODEL].concat(OPENAI_IMAGE_FALLBACK_MODELS).filter((model, index, list) => (
-    model && list.indexOf(model) === index
-  ));
+  const modelCandidates = getImageModelCandidatesForInput(inputImages);
+  if (!modelCandidates.length) {
+    throw new Error('当前图片编辑模型只支持单图输入，无法处理多参考图 P 图任务；请配置支持多图编辑的图片模型。');
+  }
   let lastError = null;
 
   for (let modelIndex = 0; modelIndex < modelCandidates.length; modelIndex += 1) {
@@ -4335,5 +4350,6 @@ module.exports = {
   shouldUseDirectBackgroundComposite,
   inferLockMaskBox,
   normalizeDimensionBoxes,
-  applyDimensionBoundaryRequestRules
+  applyDimensionBoundaryRequestRules,
+  getImageModelCandidatesForInput
 };
