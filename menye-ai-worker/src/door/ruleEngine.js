@@ -133,6 +133,7 @@ function cloneBox(box) {
 
 function makeOpeningEdgeTrimMidlineBox(doorStructure) {
   const outerTrim = getBox(doorStructure, 'outerTrim');
+  const opening = getBox(doorStructure, 'opening');
   const visibleOpening = getBox(doorStructure, 'visibleOpening');
   if (!outerTrim || !visibleOpening) {
     return null;
@@ -142,6 +143,7 @@ function makeOpeningEdgeTrimMidlineBox(doorStructure) {
     outerTrim.top,
     outerTrim.right,
     outerTrim.bottom,
+    opening && opening.top,
     visibleOpening.left,
     visibleOpening.top,
     visibleOpening.right,
@@ -150,9 +152,13 @@ function makeOpeningEdgeTrimMidlineBox(doorStructure) {
   if (!requiredValues.every(hasNumber)) {
     return null;
   }
+  const outerHeight = outerTrim.bottom - outerTrim.top;
+  const openingTopGap = opening.top - outerTrim.top;
+  const hasDistinctHeaderOrTransom = openingTopGap > Math.max(24, outerHeight * 0.12);
+  const verticalOuterTop = hasDistinctHeaderOrTransom ? opening.top : outerTrim.top;
   return Object.freeze({
     left: (outerTrim.left + visibleOpening.left) / 2,
-    top: (outerTrim.top + visibleOpening.top) / 2,
+    top: (verticalOuterTop + visibleOpening.top) / 2,
     right: (outerTrim.right + visibleOpening.right) / 2,
     bottom: visibleOpening.bottom
   });

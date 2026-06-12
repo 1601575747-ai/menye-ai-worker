@@ -935,6 +935,53 @@ function chooseNextRowAfter(horizontalScores, start, end, fallback) {
   return chosen.found ? chosen.index : Math.round(fallback);
 }
 
+function findFirstReliableEdge(scores, start, end, options = {}) {
+  const safeStart = clamp(Math.floor(start), 0, scores.length - 2);
+  const safeEnd = clamp(Math.ceil(end), safeStart + 1, scores.length - 1);
+  const threshold = Math.max(
+    Number(options.minScore) || 0,
+    localPercentile(scores, safeStart, safeEnd, 0.58) * (Number(options.thresholdRatio) || 0.62)
+  );
+  const peakRadius = Number(options.peakRadius) || 2;
+  const minRun = Math.max(1, Number(options.minRun) || 1);
+
+  for (let index = safeStart; index <= safeEnd; index += 1) {
+    let run = 0;
+    for (let offset = 0; offset < minRun && index + offset <= safeEnd; offset += 1) {
+      if ((scores[index + offset] || 0) >= threshold) {
+        run += 1;
+      }
+    }
+    const signal = scores[index] || 0;
+    if (run >= minRun && signal >= threshold && isLocalPeak(scores, index, peakRadius)) {
+      return Object.freeze({
+        index,
+        found: true
+      });
+    }
+  }
+
+  return Object.freeze({
+    index: Math.round(start),
+    found: false
+  });
+}
+
+function chooseVisibleOpeningTopRow(horizontalScores, openingTop, outerTrim) {
+  const height = outerTrim.bottom - outerTrim.top;
+  const start = openingTop + height * 0.012;
+  const end = Math.min(outerTrim.bottom - 1, openingTop + height * 0.13);
+  const fallback = openingTop + height * 0.035;
+  const firstEdge = findFirstReliableEdge(horizontalScores, start, end, {
+    minScore: 2.6,
+    peakRadius: 2
+  });
+  if (firstEdge.found) {
+    return firstEdge.index;
+  }
+  return chooseNextRowAfter(horizontalScores, start, end, fallback);
+}
+
 function makeImageDrivenBoxes(features, analysisSize, outerTrim, doorType) {
   const width = outerTrim.right - outerTrim.left;
   const height = outerTrim.bottom - outerTrim.top;
@@ -991,12 +1038,7 @@ function makeImageDrivenBoxes(features, analysisSize, outerTrim, doorType) {
     doorType,
     features
   );
-  const visibleTop = chooseNextRowAfter(
-    horizontalScores,
-    openingTop + height * 0.012,
-    Math.min(outerTrim.bottom - 1, openingTop + height * 0.13),
-    openingTop + height * 0.035
-  );
+  const visibleTop = chooseVisibleOpeningTopRow(horizontalScores, openingTop, outerTrim);
   const lowerInset = Math.max(1, Math.round(height * 0.006));
   const opening = normalizeBox({
     left: openingLeft,

@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const {
   TaskType,
   DimensionField,
@@ -47,6 +49,13 @@ const {
 } = require('../src/server');
 const { JobStatus } = require('../src/jobs/status');
 const { ErrorCode } = require('../src/utils/errors');
+
+let sharp = null;
+try {
+  sharp = require('sharp');
+} catch (error) {
+  sharp = null;
+}
 
 const expectedTaskTypes = [
   'dimension-annotation',
@@ -436,6 +445,12 @@ for (const rule of sharedHeightRules.rules) {
   assert.strictEqual(rule.sourceBoundary.to.value, 950);
   assert.strictEqual(rule.constraints.sharedBottomY, 950);
 }
+const sharedOpeningHeightRule = sharedHeightRules.rules.find((rule) => rule.field === 'openingHeight');
+const sharedVisibleHeightRule = sharedHeightRules.rules.find((rule) => rule.field === 'visibleOpeningHeight');
+assert(sharedOpeningHeightRule);
+assert(sharedVisibleHeightRule);
+assert.strictEqual(sharedOpeningHeightRule.sourceBoundary.from.value, 110);
+assert.strictEqual(sharedVisibleHeightRule.sourceBoundary.from.value, 150);
 
 const headerHeightRule = buildDimensionRules({
   doorType: 'single',
@@ -450,6 +465,43 @@ assert.strictEqual(headerHeightRule.rules[0].field, 'headerHeight');
 assert.strictEqual(headerHeightRule.rules[0].sourceBoundary.box, 'header');
 assert.strictEqual(headerHeightRule.rules[0].sourceBoundary.to.key, 'doorBottomY');
 assert.strictEqual(headerHeightRule.rules[0].sourceBoundary.to.value, 950);
+
+const transomLikeStructure = normalizeDoorStructure({
+  doorType: 'double',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 100, top: 20, right: 900, bottom: 980 },
+    opening: { left: 160, top: 300, right: 840, bottom: 970 },
+    visibleOpening: { left: 190, top: 340, right: 810, bottom: 970 },
+    doorLeaf: { left: 190, top: 340, right: 810, bottom: 970 },
+    handle: null,
+    lock: null,
+    transom: { left: 160, top: 20, right: 840, bottom: 300 },
+    header: { left: 100, top: 20, right: 900, bottom: 980 },
+    shadowRegions: []
+  },
+  keypoints: { doorBottomY: 970 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'test' },
+  needsUserAdjustment: false,
+  notes: 'transom-like local top regression'
+});
+const transomLikeRules = buildDimensionRules({
+  doorType: 'double',
+  viewSide: 'front',
+  inputs: {
+    openingHeight: '2400',
+    visibleOpeningHeight: '2300'
+  },
+  doorStructure: transomLikeStructure
+});
+const transomLikeOpeningHeight = transomLikeRules.rules.find((rule) => rule.field === 'openingHeight');
+const transomLikeVisibleHeight = transomLikeRules.rules.find((rule) => rule.field === 'visibleOpeningHeight');
+assert(transomLikeOpeningHeight);
+assert(transomLikeVisibleHeight);
+assert.strictEqual(transomLikeOpeningHeight.sourceBoundary.from.value, 320);
+assert.strictEqual(transomLikeVisibleHeight.sourceBoundary.from.value, 340);
+assert.notStrictEqual(transomLikeOpeningHeight.sourceBoundary.from.value, 180);
 
 const shadowCheck = buildDimensionRules({
   doorType: 'single',
@@ -690,6 +742,29 @@ const syntheticVisibleWidth = syntheticDoubleDoor.boxes.visibleOpening.right - s
 assert(syntheticVisibleWidth >= syntheticOpeningWidth * 0.95);
 assert(Math.abs(syntheticDoubleDoor.boxes.visibleOpening.left - syntheticDoubleDoor.boxes.opening.left) <= 3);
 assert(Math.abs(syntheticDoubleDoor.boxes.visibleOpening.right - syntheticDoubleDoor.boxes.opening.right) <= 3);
+
+const localSingleDoorRegressionPath = path.join(
+  process.env.HOME || '',
+  'Downloads',
+  '3zhk7ivH1mu-0770afb1f40e2998f623f8c34f2a7602.png'
+);
+if (sharp && fs.existsSync(localSingleDoorRegressionPath)) {
+  const localSingleDoorImage = await sharp(localSingleDoorRegressionPath).rotate().png().toBuffer();
+  const localSingleDoorMetadata = await sharp(localSingleDoorImage).metadata();
+  const localSingleDoor = await analyzeDoor({
+    image: localSingleDoorImage,
+    imageSize: {
+      width: localSingleDoorMetadata.width,
+      height: localSingleDoorMetadata.height
+    },
+    doorType: 'single',
+    viewSide: 'front',
+    taskType: TaskType.DIMENSION_ANNOTATION,
+    mode: 'heuristic'
+  });
+  assert(localSingleDoor.boxes.visibleOpening.top < 100);
+  assert(localSingleDoor.boxes.visibleOpening.top - localSingleDoor.boxes.opening.top <= 32);
+}
 
 const analyzerRules = buildDimensionRules({
   doorType: mockDoor.doorType,
