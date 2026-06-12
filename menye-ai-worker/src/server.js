@@ -472,8 +472,9 @@ function getPromptDecisionSummary(job) {
   const requirementText = job && job.requirement ? String(job.requirement) : '';
   const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
   const referenceImages = getReferenceImages(job);
-  const hasEdgeTrimDetail = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail');
+  const hasUploadedEdgeTrimDetail = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail');
   const hasHeaderColumnDetail = referenceImages.some((item) => item && item.slotId === 'header-column-detail');
+  const hasEffectiveEdgeTrimDetail = hasUploadedEdgeTrimDetail && !hasHeaderColumnDetail;
   const hasGlassGrilleDetail = referenceImages.some((item) => item && item.slotId === 'glass-grille-detail');
   const hasBackgroundReference = referenceImages.some((item) => item && item.slotId === 'background-reference');
   const hasColorSample = referenceImages.some((item) => item && item.slotId === 'color-sample');
@@ -488,9 +489,10 @@ function getPromptDecisionSummary(job) {
   return {
     requirementText,
     backgroundInfo,
-    hasEdgeTrimDetail,
-    hasUploadedEdgeTrimDetail: hasEdgeTrimDetail,
-    hasEffectiveEdgeTrimDetail: hasEdgeTrimDetail && !hasHeaderColumnDetail,
+    hasEdgeTrimDetail: hasUploadedEdgeTrimDetail,
+    hasUploadedEdgeTrimDetail,
+    hasEffectiveEdgeTrimDetail,
+    ignoredEdgeTrimBecauseHeaderColumn: hasUploadedEdgeTrimDetail && hasHeaderColumnDetail,
     hasHeaderColumnDetail,
     hasGlassGrilleDetail,
     hasBackgroundReference,
@@ -500,10 +502,10 @@ function getPromptDecisionSummary(job) {
     userSpecifiedEdgeTrimColor,
     userWantsEdgeTrimReferenceColor,
     userWantsEdgeTrimPreserveColor,
-    edgeTrimPreserveMeansReferenceColor: hasEdgeTrimDetail && userWantsEdgeTrimPreserveColor,
+    edgeTrimPreserveMeansReferenceColor: hasEffectiveEdgeTrimDetail && userWantsEdgeTrimPreserveColor,
     userWantsIndependentEdgeTrimColor,
-    edgeTrimColorProtectedFromColorSample: hasEdgeTrimDetail && userWantsIndependentEdgeTrimColor,
-    colorSampleAppliesToEdgeTrim: hasColorSample && !(hasEdgeTrimDetail && userWantsIndependentEdgeTrimColor),
+    edgeTrimColorProtectedFromColorSample: hasEffectiveEdgeTrimDetail && userWantsIndependentEdgeTrimColor,
+    colorSampleAppliesToEdgeTrim: hasColorSample && !(hasEffectiveEdgeTrimDetail && userWantsIndependentEdgeTrimColor),
     userWantsIndependentHeaderColumnColor,
     headerColumnColorProtectedFromColorSample: hasHeaderColumnDetail && userWantsIndependentHeaderColumnColor,
     colorSampleAppliesToHeaderColumn: hasColorSample && hasHeaderColumnDetail && !userWantsIndependentHeaderColumnColor,

@@ -323,6 +323,34 @@ assert(multiPartPrompt.includes('门头/门柱/外框装饰必须先按门头/�
 assert(!multiPartPrompt.includes('系统识别到包边参考图特征'));
 assert(!multiPartPrompt.includes('包边：必须识别包边参考图'));
 
+const headerOverridesIndependentEdgeTrimJob = Object.freeze({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '双开门',
+  requirement: '门头门柱按参考图，包边按包边参考图颜色，门体按颜色参考图',
+  referenceImages: Object.freeze([
+    Object.freeze({ slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' }),
+    Object.freeze({ slotId: 'header-column-detail', originalImageFileID: 'cloud://mock/header.png' }),
+    Object.freeze({ slotId: 'edge-trim-detail', originalImageFileID: 'cloud://mock/edge.png', colorMode: 'reference' }),
+    Object.freeze({ slotId: 'color-sample', originalImageFileID: 'cloud://mock/color.png' })
+  ])
+});
+const headerOverridesIndependentEdgeTrimDecision = getPromptDecisionSummary(headerOverridesIndependentEdgeTrimJob);
+assert.strictEqual(headerOverridesIndependentEdgeTrimDecision.hasUploadedEdgeTrimDetail, true);
+assert.strictEqual(headerOverridesIndependentEdgeTrimDecision.hasEffectiveEdgeTrimDetail, false);
+assert.strictEqual(headerOverridesIndependentEdgeTrimDecision.ignoredEdgeTrimBecauseHeaderColumn, true);
+assert.strictEqual(headerOverridesIndependentEdgeTrimDecision.userWantsIndependentEdgeTrimColor, true);
+assert.strictEqual(headerOverridesIndependentEdgeTrimDecision.edgeTrimColorProtectedFromColorSample, false);
+assert.strictEqual(headerOverridesIndependentEdgeTrimDecision.colorSampleAppliesToEdgeTrim, true);
+const headerOverridesIndependentEdgeTrimPrompt = buildDoorImageInstruction(headerOverridesIndependentEdgeTrimJob, null, null, [
+  { slotId: 'header-column-detail', label: '门头/门柱', color: '深灰色', applyDescription: '迁移门头门柱结构' },
+  { slotId: 'edge-trim-detail', label: '包边', color: '红棕色', applyDescription: '迁移包边结构' },
+  { slotId: 'color-sample', label: '门体颜色', color: '浅木色', colorFamily: '木色', applyDescription: '统一浅木色' }
+], null);
+assert(headerOverridesIndependentEdgeTrimPrompt.includes('门头/门柱覆盖包边规则'));
+assert(!headerOverridesIndependentEdgeTrimPrompt.includes('包边颜色独立意图解释'));
+assert(!headerOverridesIndependentEdgeTrimPrompt.includes('包边：必须识别包边参考图'));
+
 const independentHeaderColorJob = Object.freeze({
   taskType: 'parts-compose',
   templateType: '门部件拼接效果图',
