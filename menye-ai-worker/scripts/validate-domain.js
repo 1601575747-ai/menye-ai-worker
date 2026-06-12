@@ -40,6 +40,11 @@ const {
   listArtifactsForJob,
   clearArtifactsForTest
 } = require('../src/jobs/artifactService');
+const {
+  buildDoorImageInstruction,
+  getPromptDecisionSummary,
+  normalizeTaskType
+} = require('../src/server');
 const { JobStatus } = require('../src/jobs/status');
 const { ErrorCode } = require('../src/utils/errors');
 
@@ -218,6 +223,88 @@ for (const doorType of expectedDoorTypes) {
     field: 'leafWidth'
   }), false);
 }
+
+const multiPartPromptJob = Object.freeze({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '双开门',
+  requirement: '门体和包边跟颜色参考图统一，背景改成白板，门头门柱按参考图，气窗按参考图，把手按参考图',
+  referenceImages: Object.freeze([
+    Object.freeze({ slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' }),
+    Object.freeze({ slotId: 'header-column-detail', originalImageFileID: 'cloud://mock/header.png' }),
+    Object.freeze({ slotId: 'edge-trim-detail', originalImageFileID: 'cloud://mock/edge.png' }),
+    Object.freeze({ slotId: 'glass-grille-detail', originalImageFileID: 'cloud://mock/glass.png' }),
+    Object.freeze({ slotId: 'handle-detail', originalImageFileID: 'cloud://mock/handle.png' }),
+    Object.freeze({ slotId: 'color-sample', originalImageFileID: 'cloud://mock/color.png' })
+  ])
+});
+assert.strictEqual(normalizeTaskType(multiPartPromptJob), 'parts-compose');
+const multiPartDecision = getPromptDecisionSummary(multiPartPromptJob);
+assert.strictEqual(multiPartDecision.hasColorSample, true);
+assert.strictEqual(multiPartDecision.colorSampleAppliesToEdgeTrim, true);
+const multiPartPrompt = buildDoorImageInstruction(multiPartPromptJob, null, null, [
+  { slotId: 'header-column-detail', label: '门头/门柱', color: '深灰色', applyDescription: '迁移门头门柱结构' },
+  { slotId: 'edge-trim-detail', label: '包边', color: '红棕色', applyDescription: '迁移包边结构' },
+  { slotId: 'glass-grille-detail', label: '气窗', color: '灰玻', applyDescription: '迁移气窗格栅' },
+  { slotId: 'color-sample', label: '门体颜色', color: '浅木色', colorFamily: '木色', applyDescription: '统一浅木色' }
+], null);
+assert(multiPartPrompt.includes('结构化强制任务清单'));
+assert(multiPartPrompt.includes('门头/门柱覆盖包边规则'));
+assert(multiPartPrompt.includes('把手'));
+assert(multiPartPrompt.includes('气窗'));
+assert(multiPartPrompt.includes('门头/门柱'));
+assert(multiPartPrompt.includes('整门颜色'));
+assert(multiPartPrompt.includes('门部件拼接效果图默认白板背景'));
+assert(multiPartPrompt.includes('最终颜色覆盖自检'));
+assert(multiPartPrompt.includes('门头/门柱/外框装饰必须先按门头/门柱参考图处理结构，再被颜色参考图统一校色'));
+assert(!multiPartPrompt.includes('系统识别到包边参考图特征'));
+assert(!multiPartPrompt.includes('包边：必须识别包边参考图'));
+
+const backgroundPrompt = buildDoorImageInstruction({
+  taskType: 'background-replace',
+  templateType: '场景效果图',
+  doorType: '双开门',
+  requirement: '把门安装到背景参考图的门位里',
+  targetParts: ['background'],
+  referenceImages: [
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' },
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' }
+  ]
+}, {
+  source: 'background-doorway-test',
+  left: 120,
+  top: 80,
+  right: 860,
+  bottom: 980
+}, null, [
+  { slotId: 'background-reference', label: '背景', applyDescription: '以背景门位为最终画布' }
+], null);
+assert(backgroundPrompt.includes('输入图1是背景参考图'));
+assert(backgroundPrompt.includes('输入图2是整门上下文图'));
+assert(backgroundPrompt.includes('旧门、门洞或预留门位只用于定位'));
+assert(backgroundPrompt.includes('背景参考图不能作为门款'));
+assert(backgroundPrompt.includes('最终结果应等于：输入图1背景底图 + 输入图2整门抠图贴入输入图1的 mask 门位区域'));
+
+const handleReferencePrompt = buildDoorImageInstruction({
+  taskType: 'handle-replacement',
+  templateType: '门把手替换',
+  doorType: '双开门',
+  requirement: '只换把手，其他不变',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'handle-detail', originalImageFileID: 'cloud://mock/handle.png' }
+  ]
+}, null, {
+  color: '金色',
+  material: '金属',
+  finish: '亮面',
+  shape: '长拉手',
+  containsSmartLock: true,
+  smartLockInterference: '参考图中拍到了黑色智能锁面板'
+}, [], null);
+assert(handleReferencePrompt.includes('把手图含锁防污染规则'));
+assert(handleReferencePrompt.includes('这些都必须视为非把手干扰信息，不能被复制'));
+assert(handleReferencePrompt.includes('整门照中原本存在的智能锁/锁体/锁芯/猫眼/门铃位置'));
 
 const mockDoorStructure = Object.freeze({
   doorType: 'single',

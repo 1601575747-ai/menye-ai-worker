@@ -4107,9 +4107,17 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { success: false, errorMessage: '未找到接口' });
 });
 
-server.listen(PORT, () => {
-  console.log(`menye-ai-worker listening on ${PORT}`);
-  if (!isConfigured) {
-    console.warn(`missing env keys: ${missingEnvKeys.join(', ')}`);
-  }
-});
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`menye-ai-worker listening on ${PORT}`);
+    if (!isConfigured) {
+      console.warn(`missing env keys: ${missingEnvKeys.join(', ')}`);
+    }
+  });
+}
+
+module.exports = {
+  buildDoorImageInstruction,
+  getPromptDecisionSummary,
+  normalizeTaskType
+};
