@@ -611,6 +611,50 @@ assert(backgroundHeaderIndependentPrompt.includes('门头/门柱：必须'));
 assert(backgroundHeaderIndependentPrompt.includes('门头/门柱参考图中的颜色只允许作用到门头/门柱/外框装饰自身'));
 assert(!backgroundHeaderIndependentPrompt.includes('最高优先级门头/门柱同色规则'));
 
+const backgroundPanelGlassTextureColorJob = {
+  taskType: 'scene-effect',
+  templateType: '场景效果图',
+  doorType: '单开门',
+  targetParts: ['background'],
+  requirement: '背景按参考图，门板造型、气窗、材质纹理和颜色都按参考图',
+  referenceImages: [
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' },
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'panel-style-detail', originalImageFileID: 'cloud://mock/panel.png' },
+    { slotId: 'glass-grille-detail', originalImageFileID: 'cloud://mock/glass.png' },
+    { slotId: 'texture-reference', originalImageFileID: 'cloud://mock/texture.png' },
+    { slotId: 'color-sample', originalImageFileID: 'cloud://mock/color.png' }
+  ]
+};
+assert.strictEqual(shouldUseDirectBackgroundComposite(backgroundPanelGlassTextureColorJob), false);
+const backgroundPanelGlassTextureColorPrompt = buildDoorImageInstruction(backgroundPanelGlassTextureColorJob, {
+  source: 'background-doorway-test',
+  left: 120,
+  top: 80,
+  right: 860,
+  bottom: 980
+}, null, [
+  { slotId: 'background-reference', label: '背景', applyDescription: '以背景门位为最终画布' },
+  { slotId: 'panel-style-detail', label: '门板线条/造型', structure: '窄边框压线', applyDescription: '迁移门板压线造型' },
+  { slotId: 'glass-grille-detail', label: '气窗', structure: '上方格栅玻璃', applyDescription: '迁移气窗格栅' },
+  { slotId: 'texture-reference', label: '材质纹理', material: '细木纹', applyDescription: '迁移细木纹质感' },
+  { slotId: 'color-sample', label: '颜色', color: '浅木色', colorFamily: '木色', applyDescription: '统一浅木色' }
+], null);
+assert(backgroundPanelGlassTextureColorPrompt.includes('输入图1是背景参考图'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('输入图2是整门上下文图'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('门板线条/造型：必须'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('气窗：必须'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('材质纹理：必须'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('结构化需求确认：客户上传了门板线条/造型细节图'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('结构化需求确认：客户上传了气窗细节图'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('结构化需求确认：客户上传了材质纹理参考图'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('结构化需求确认：客户上传了颜色参考图'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('以上任务是并列关系，不是互斥关系'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('不要只执行其中一个参考图任务后忽略其他已上传参考图'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('背景层只改背景'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('材质纹理参考图只控制纹理、木纹方向'));
+assert(backgroundPanelGlassTextureColorPrompt.includes('颜色参考图仍是颜色层唯一来源'));
+
 const textureOnlyNoColorDecision = getPromptDecisionSummary({
   taskType: 'parts-compose',
   templateType: '门部件拼接效果图',
