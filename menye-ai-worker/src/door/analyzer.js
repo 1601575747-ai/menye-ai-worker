@@ -163,7 +163,12 @@ function normalizeDoorStructure(raw, context = {}) {
     boxes[key] = normalizeBox(sourceBoxes[key]);
   }
   boxes.shadowRegions = normalizeShadowRegions(sourceBoxes.shadowRegions);
-  const dimensionAnchors = normalizeDimensionAnchors(source.dimensionAnchors);
+  const sourceAnchors = normalizeDimensionAnchors(source.dimensionAnchors);
+  const inferredAnchors = inferDimensionAnchorsFromBoxes(boxes);
+  const dimensionAnchors = Object.freeze({
+    doorTrimConnection: sourceAnchors.doorTrimConnection || inferredAnchors.doorTrimConnection,
+    openingMidline: sourceAnchors.openingMidline || inferredAnchors.openingMidline
+  });
 
   const rawDoorBottomY = source.keypoints && source.keypoints.doorBottomY;
   const hasDoorBottomY = rawDoorBottomY !== null && rawDoorBottomY !== undefined && rawDoorBottomY !== '';
@@ -331,6 +336,55 @@ function isSuspiciousVerticalBoundary(box, outerBox, options = {}) {
     box.bottom < outerBox.top + outerHeight * minBottomRatio;
 }
 
+function isTopCollapsedToOuter(box, outerBox, options = {}) {
+  if (!box || !outerBox) {
+    return false;
+  }
+  const outerHeight = outerBox.bottom - outerBox.top;
+  if (!hasNumber(outerHeight) || outerHeight <= 0 || !hasNumber(box.top)) {
+    return false;
+  }
+  const minGap = Math.max(
+    Number(options.minGapPx) || 5,
+    outerHeight * (Number(options.minGapRatio) || 0.012)
+  );
+  return box.top <= outerBox.top + minGap;
+}
+
+function isSuspiciousOpeningVisibleGap(openingBox, visibleBox, outerBox, options = {}) {
+  if (!openingBox || !visibleBox || !outerBox) {
+    return false;
+  }
+  const outerHeight = outerBox.bottom - outerBox.top;
+  if (!hasNumber(outerHeight) || outerHeight <= 0 || !hasNumber(openingBox.top) || !hasNumber(visibleBox.top)) {
+    return false;
+  }
+  const gap = visibleBox.top - openingBox.top;
+  const maxGap = Math.max(
+    Number(options.maxGapPx) || 72,
+    outerHeight * (Number(options.maxGapRatio) || 0.14)
+  );
+  return gap < -Math.max(6, outerHeight * 0.01) || gap > maxGap;
+}
+
+function isDoorBottomSuspicious(aiBottom, aiBoxes, outerBox, imageHeight) {
+  if (!hasNumber(aiBottom) || !outerBox) {
+    return false;
+  }
+  const outerHeight = outerBox.bottom - outerBox.top;
+  const bottomTolerance = Math.max(6, Math.min(24, outerHeight * 0.018, imageHeight * 0.018));
+  if (aiBottom > outerBox.bottom + bottomTolerance) {
+    return true;
+  }
+  const shadowRegions = aiBoxes && Array.isArray(aiBoxes.shadowRegions) ? aiBoxes.shadowRegions : [];
+  return shadowRegions.some((region) => region &&
+    hasNumber(region.top) &&
+    hasNumber(region.bottom) &&
+    aiBottom >= region.top - 2 &&
+    aiBottom <= region.bottom + 2 &&
+    aiBottom >= outerBox.bottom - bottomTolerance);
+}
+
 function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context = {}) {
   if (!aiStructure || !heuristicStructure || !heuristicStructure.boxes) {
     return aiStructure;
@@ -358,7 +412,10 @@ function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context 
     maxTopRatio: 0.58,
     minHeightRatio: 0.34,
     minBottomRatio: 0.64
-  });
+  }) || (
+    isTopCollapsedToOuter(aiBoxes.opening, outerForRatios, { minGapRatio: 0.01 }) &&
+    !isTopCollapsedToOuter(heuristicBoxes.opening, outerForRatios, { minGapRatio: 0.01 })
+  );
   nextBoxes.opening = mergeBoxSpan(aiBoxes.opening, heuristicBoxes.opening, {
     useHeuristicX: openingTooNarrow,
     useHeuristicY: openingSuspiciousY
@@ -378,7 +435,10 @@ function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context 
     maxTopRatio: 0.62,
     minHeightRatio: 0.3,
     minBottomRatio: 0.6
-  });
+  }) || isSuspiciousOpeningVisibleGap(aiBoxes.opening, aiBoxes.visibleOpening, outerForRatios) || (
+    isTopCollapsedToOuter(aiBoxes.visibleOpening, outerForRatios, { minGapRatio: 0.018 }) &&
+    !isTopCollapsedToOuter(heuristicBoxes.visibleOpening, outerForRatios, { minGapRatio: 0.018 })
+  );
   nextBoxes.visibleOpening = mergeBoxSpan(aiBoxes.visibleOpening, heuristicBoxes.visibleOpening, {
     useHeuristicX: visibleTooNarrow,
     useHeuristicY: visibleSuspiciousY
@@ -409,7 +469,10 @@ function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context 
   const heuristicBottom = heuristicStructure.keypoints && heuristicStructure.keypoints.doorBottomY;
   const useHeuristicBottom = hasNumber(aiBottom) &&
     hasNumber(heuristicBottom) &&
-    Math.abs(aiBottom - heuristicBottom) > Math.max(24, imageHeight * 0.04);
+    (
+      Math.abs(aiBottom - heuristicBottom) > Math.max(24, imageHeight * 0.04) ||
+      isDoorBottomSuspicious(aiBottom, aiBoxes, nextBoxes.outerTrim || heuristicBoxes.outerTrim || aiBoxes.outerTrim, imageHeight)
+    );
   const restoreSharedHeightMode = aiStructure.modes &&
     aiStructure.modes.heightBottomMode === 'separate' &&
     heuristicStructure.modes &&
@@ -473,6 +536,7 @@ function markAnalyzerReady(doorStructure, notes) {
     doorType: doorStructure.doorType,
     viewSide: doorStructure.viewSide,
     boxes: doorStructure.boxes,
+    dimensionAnchors: doorStructure.dimensionAnchors,
     keypoints: doorStructure.keypoints,
     modes: doorStructure.modes,
     confidence: doorStructure.confidence,

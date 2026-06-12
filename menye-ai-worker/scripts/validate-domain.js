@@ -678,6 +678,57 @@ const structureOnlyNoColorDecision = getPromptDecisionSummary({
 });
 assert.strictEqual(structureOnlyNoColorDecision.allowDoorSurfaceColorChange, false);
 
+const localGlassColorNoDoorColorDecision = getPromptDecisionSummary({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '单开门',
+  targetParts: ['glass-grille'],
+  requirement: '气窗颜色按参考图，门体颜色不变',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'glass-grille-detail', originalImageFileID: 'cloud://mock/glass.png' }
+  ]
+});
+assert.strictEqual(localGlassColorNoDoorColorDecision.allowDoorSurfaceColorChange, false);
+
+const localPanelStyleColorNoDoorColorDecision = getPromptDecisionSummary({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '单开门',
+  targetParts: ['panel-style'],
+  requirement: '门板造型颜色按参考图，整门颜色不变',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'panel-style-detail', originalImageFileID: 'cloud://mock/panel.png' }
+  ]
+});
+assert.strictEqual(localPanelStyleColorNoDoorColorDecision.allowDoorSurfaceColorChange, false);
+
+const localEdgeTrimColorNoDoorColorDecision = getPromptDecisionSummary({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '单开门',
+  targetParts: ['edge-trim'],
+  requirement: '包边按包边参考图颜色，门体颜色不变',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'edge-trim-detail', originalImageFileID: 'cloud://mock/edge.png' }
+  ]
+});
+assert.strictEqual(localEdgeTrimColorNoDoorColorDecision.userWantsIndependentEdgeTrimColor, true);
+assert.strictEqual(localEdgeTrimColorNoDoorColorDecision.allowDoorSurfaceColorChange, false);
+
+assert.strictEqual(getPromptDecisionSummary({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '单开门',
+  targetParts: ['door-color'],
+  requirement: '门体颜色改成浅木色',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' }
+  ]
+}).allowDoorSurfaceColorChange, true);
+
 const handleReferencePrompt = buildDoorImageInstruction({
   taskType: 'handle-replacement',
   templateType: '门把手替换',
@@ -1068,6 +1119,32 @@ assert.strictEqual(legacyAiOpeningOnlyDimensionBoxes.openingMidlineBox.left, 158
 assert.strictEqual(legacyAiOpeningOnlyDimensionBoxes.openingMidlineBox.top, 148);
 assert.strictEqual(legacyAiOpeningOnlyDimensionBoxes.openingMidlineBox.source, 'dimension-opening-door-trim-connection-ai');
 
+const legacyVisibleLikeMidlineDimensionBoxes = normalizeDimensionBoxes({
+  outerTrimBox: { left: 80, top: 70, right: 920, bottom: 960 },
+  openingMidlineBox: { left: 160, top: 150, right: 840, bottom: 940 },
+  visibleOpeningBox: { left: 160, top: 150, right: 840, bottom: 940 },
+  doorBottomY: 950,
+  heightBottomMode: 'shared'
+}, dimensionBoxTestSize, {
+  hasDoorOpeningRequest: true,
+  hasVisibleOpeningRequest: true
+});
+assert.strictEqual(legacyVisibleLikeMidlineDimensionBoxes.openingMidlineBox.left, 120);
+assert.strictEqual(legacyVisibleLikeMidlineDimensionBoxes.openingMidlineBox.top, 110);
+assert.strictEqual(legacyVisibleLikeMidlineDimensionBoxes.openingMidlineBox.right, 880);
+assert.strictEqual(legacyVisibleLikeMidlineDimensionBoxes.openingMidlineBox.source, 'dimension-opening-request-aware-midline');
+
+const legacyShadowBottomDimensionBoxes = normalizeDimensionBoxes({
+  outerTrimBox: { left: 80, top: 70, right: 920, bottom: 960 },
+  visibleOpeningBox: { left: 160, top: 150, right: 840, bottom: 940 },
+  doorBottomY: 990,
+  heightBottomMode: 'shared'
+}, dimensionBoxTestSize, {
+  hasDoorOpeningRequest: true,
+  hasVisibleOpeningRequest: false
+});
+assert.strictEqual(legacyShadowBottomDimensionBoxes.doorBottomY, 960);
+
 const normalizedInputs = normalizeDimensionInputs({
   openingWidth: '900mm',
   openingHeight: '',
@@ -1194,6 +1271,49 @@ assert.strictEqual(aiAnchoredOpeningOnlyWidth.sourceBoundary.anchorSource, 'dime
 assert.strictEqual(aiAnchoredOpeningOnlyWidth.sourceBoundary.from.value, 158);
 assert.strictEqual(aiAnchoredOpeningOnlyWidth.sourceBoundary.to.value, 842);
 assert.strictEqual(aiAnchoredOpeningOnlyHeight.sourceBoundary.from.value, 148);
+
+const badAiMidlineDoorStructure = normalizeDoorStructure({
+  doorType: 'single',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 80, top: 70, right: 920, bottom: 960 },
+    opening: { left: 120, top: 110, right: 880, bottom: 950 },
+    visibleOpening: { left: 160, top: 150, right: 840, bottom: 940 },
+    doorLeaf: { left: 200, top: 190, right: 800, bottom: 950 },
+    handle: null,
+    lock: null,
+    transom: null,
+    header: { left: 60, top: 30, right: 940, bottom: 960 },
+    shadowRegions: []
+  },
+  dimensionAnchors: {
+    doorTrimConnection: { left: 160, top: 150, right: 840, bottom: 940 },
+    openingMidline: { left: 160, top: 150, right: 840, bottom: 940 }
+  },
+  keypoints: { doorBottomY: 950 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'high' },
+  needsUserAdjustment: false,
+  notes: 'bad ai midline equals visible opening'
+});
+const badAiMidlineRules = buildDimensionRules({
+  doorType: 'single',
+  viewSide: 'front',
+  inputs: {
+    openingWidth: '900',
+    openingHeight: '2100',
+    visibleOpeningWidth: '800'
+  },
+  doorStructure: badAiMidlineDoorStructure
+});
+const badAiMidlineOpeningWidth = badAiMidlineRules.rules.find((rule) => rule.field === 'openingWidth');
+const badAiMidlineOpeningHeight = badAiMidlineRules.rules.find((rule) => rule.field === 'openingHeight');
+assert(badAiMidlineOpeningWidth);
+assert(badAiMidlineOpeningHeight);
+assert.strictEqual(badAiMidlineOpeningWidth.sourceBoundary.anchorSource, null);
+assert.strictEqual(badAiMidlineOpeningWidth.sourceBoundary.from.value, 120);
+assert.strictEqual(badAiMidlineOpeningWidth.sourceBoundary.to.value, 880);
+assert.strictEqual(badAiMidlineOpeningHeight.sourceBoundary.from.value, 110);
 
 const openingHeightWithVisibleWidthOnly = buildDimensionRules({
   doorType: '单开门',
@@ -1513,6 +1633,8 @@ assert(aiPositioningPrompt.includes('半包边/包边厚度中线位置'));
 assert(aiPositioningPrompt.includes('dimensionAnchors'));
 assert(aiPositioningPrompt.includes('doorTrimConnection'));
 assert(aiPositioningPrompt.includes('openingMidline'));
+assert(aiPositioningPrompt.includes('不得直接等同于 outerTrim 或 visibleOpening'));
+assert(aiPositioningPrompt.includes('门外天空、栏杆、展厅地毯'));
 
 let capturedAnalyzerPrompt = '';
 const promptCaptureAiClient = {
@@ -1658,6 +1780,101 @@ const aiCorrectionKeptStructure = mergeAiStructureWithHeuristic(aiCorrectedTopSt
 });
 assert.strictEqual(aiCorrectionKeptStructure.boxes.opening.top, aiCorrectedTopStructure.boxes.opening.top);
 assert.strictEqual(aiCorrectionKeptStructure.boxes.visibleOpening.top, aiCorrectedTopStructure.boxes.visibleOpening.top);
+
+const heuristicTopGoodStructure = normalizeDoorStructure({
+  doorType: 'single',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 100, top: 20, right: 900, bottom: 980 },
+    opening: { left: 160, top: 78, right: 840, bottom: 970 },
+    visibleOpening: { left: 190, top: 118, right: 810, bottom: 970 },
+    doorLeaf: { left: 190, top: 118, right: 810, bottom: 970 },
+    handle: null,
+    lock: null,
+    transom: null,
+    header: { left: 100, top: 20, right: 900, bottom: 980 },
+    shadowRegions: []
+  },
+  keypoints: { doorBottomY: 970 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'heuristic' },
+  needsUserAdjustment: false,
+  notes: 'heuristic top guard baseline'
+});
+const aiVisibleTopTooLowStructure = normalizeDoorStructure({
+  doorType: 'single',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 100, top: 20, right: 900, bottom: 980 },
+    opening: { left: 158, top: 80, right: 842, bottom: 970 },
+    visibleOpening: { left: 190, top: 280, right: 810, bottom: 970 },
+    doorLeaf: { left: 190, top: 280, right: 810, bottom: 970 },
+    handle: null,
+    lock: null,
+    transom: null,
+    header: { left: 100, top: 20, right: 900, bottom: 980 },
+    shadowRegions: []
+  },
+  keypoints: { doorBottomY: 970 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'high', opening: 'high', visibleOpening: 'high', outerTrim: 'high', doorLeaf: 'high' },
+  needsUserAdjustment: false,
+  notes: 'ai visible top confused by panel interior'
+});
+const aiVisibleTopGuardedStructure = mergeAiStructureWithHeuristic(aiVisibleTopTooLowStructure, heuristicTopGoodStructure, {
+  imageSize: { width: 1000, height: 1000 }
+});
+assert.strictEqual(aiVisibleTopGuardedStructure.boxes.visibleOpening.top, heuristicTopGoodStructure.boxes.visibleOpening.top);
+assert(aiVisibleTopGuardedStructure.notes.includes('visibleOpening top/bottom restored from heuristic guard'));
+
+const heuristicBottomGoodStructure = normalizeDoorStructure({
+  doorType: 'single',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 100, top: 20, right: 900, bottom: 960 },
+    opening: { left: 160, top: 78, right: 840, bottom: 960 },
+    visibleOpening: { left: 190, top: 118, right: 810, bottom: 960 },
+    doorLeaf: { left: 190, top: 118, right: 810, bottom: 960 },
+    handle: null,
+    lock: null,
+    transom: null,
+    header: { left: 100, top: 20, right: 900, bottom: 960 },
+    shadowRegions: []
+  },
+  keypoints: { doorBottomY: 960 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'heuristic' },
+  needsUserAdjustment: false,
+  notes: 'heuristic bottom guard baseline'
+});
+const aiShadowBottomStructure = normalizeDoorStructure({
+  doorType: 'single',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 100, top: 20, right: 900, bottom: 960 },
+    opening: { left: 160, top: 78, right: 840, bottom: 960 },
+    visibleOpening: { left: 190, top: 118, right: 810, bottom: 960 },
+    doorLeaf: { left: 190, top: 118, right: 810, bottom: 960 },
+    handle: null,
+    lock: null,
+    transom: null,
+    header: { left: 100, top: 20, right: 900, bottom: 960 },
+    shadowRegions: [
+      { left: 90, top: 960, right: 910, bottom: 995 }
+    ]
+  },
+  keypoints: { doorBottomY: 990 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'high', opening: 'high', visibleOpening: 'high', outerTrim: 'high', doorLeaf: 'high' },
+  needsUserAdjustment: false,
+  notes: 'ai bottom fell into shadow'
+});
+const aiShadowBottomGuardedStructure = mergeAiStructureWithHeuristic(aiShadowBottomStructure, heuristicBottomGoodStructure, {
+  imageSize: { width: 1000, height: 1000 }
+});
+assert.strictEqual(aiShadowBottomGuardedStructure.keypoints.doorBottomY, 960);
+assert.strictEqual(aiShadowBottomGuardedStructure.modes.heightBottomMode, 'shared');
+assert(aiShadowBottomGuardedStructure.notes.includes('doorBottomY restored from heuristic guard'));
 
 const mockDoor = mockAnalyzer({
   doorType: '双开门',

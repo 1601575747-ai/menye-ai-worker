@@ -549,6 +549,28 @@ function removeBackgroundColorText(text) {
     .replace(/(?:抠图|扣图|抠出来|扣出来|单独抠|单独扣)[^。；，,.!?！？]{0,24}/g, ' ');
 }
 
+function removeLocalPartColorText(text) {
+  return String(text || '')
+    .split(/[。；，,.!?！？]+/)
+    .filter((clause) => {
+      const value = String(clause || '').trim();
+      if (!value) {
+        return false;
+      }
+      const mentionsColor = /颜色|色卡|色号|编号|参考色|改色|换色|调色|变色/.test(value);
+      if (!mentionsColor) {
+        return true;
+      }
+      const mentionsDoorSurface = /门体|门扇|整门|门面|门板颜色|门板色|门板改色|门板换色|门板调色/.test(value);
+      if (mentionsDoorSurface) {
+        return true;
+      }
+      const mentionsLocalPart = /包边|门套|收口|压线|把手|门把手|锁体|智能锁|锁孔|猫眼|门铃|气窗|玻璃|格栅|透光窗|门头|门楣|门柱|立柱|罗马柱|外框|材质纹理|纹理|门板造型|门板线条|门芯造型/.test(value);
+      return !mentionsLocalPart;
+    })
+    .join(' ');
+}
+
 function isRejectedColorTargetName(value) {
   return /^(?:白底|白板|透明底|背景|底色|底图|不改|不变|保持|原样|参考图|包边|门套|把手|门把手|整门|门体|门扇|门板|颜色|色卡|色号|编号)$/.test(value);
 }
@@ -592,7 +614,7 @@ function extractNamedColorTargetFromText(text) {
 }
 
 function extractColorReferenceTarget(job) {
-  const text = getColorRequestText(job);
+  const text = removeLocalPartColorText(removeBackgroundColorText(getColorRequestText(job)));
   const codeMatched = /[A-Z]{1,6}\s*[-－–—]?\s*\d{2,8}/i.exec(text);
   if (codeMatched) {
     return {
@@ -621,7 +643,7 @@ function hasPositiveDoorSurfaceColorText(text) {
 }
 
 function hasDoorSurfaceColorTextRequest(job) {
-  const text = removeBackgroundColorText(getColorRequestText(job));
+  const text = removeLocalPartColorText(removeBackgroundColorText(getColorRequestText(job)));
   if (hasDoorSurfaceColorPreserveText(text) && !hasPositiveDoorSurfaceColorText(text)) {
     return false;
   }
@@ -2301,6 +2323,21 @@ function getDimensionBoundaryTolerance(boxes) {
   return Math.max(6, (outerTrim.right - outerTrim.left) * 0.035);
 }
 
+function isCoordinateInDimensionMidBand(value, outerValue, innerValue, tolerance) {
+  if (![value, outerValue, innerValue].every(Number.isFinite)) {
+    return true;
+  }
+  const low = Math.min(outerValue, innerValue);
+  const high = Math.max(outerValue, innerValue);
+  const span = high - low;
+  const precision = Math.max(4, Math.min(18, tolerance * 0.6));
+  if (span <= precision * 1.5) {
+    return value >= low - precision && value <= high + precision;
+  }
+  return value >= low + span * 0.25 - precision * 0.25 &&
+    value <= low + span * 0.75 + precision * 0.25;
+}
+
 function isReasonableDoorTrimConnectionBox(candidate, boxes) {
   if (!hasDimensionBoxNumbers(candidate)) {
     return false;
@@ -2348,8 +2385,31 @@ function isReasonableOpeningMidlineBox(candidate, boxes) {
     candidate.right >= visibleOpening.right - tolerance &&
     candidate.top >= topFloor - tolerance &&
     candidate.top <= visibleOpening.top + tolerance &&
+    isCoordinateInDimensionMidBand(candidate.left, outerTrim.left, visibleOpening.left, tolerance) &&
+    isCoordinateInDimensionMidBand(candidate.right, outerTrim.right, visibleOpening.right, tolerance) &&
+    isCoordinateInDimensionMidBand(candidate.top, topFloor, visibleOpening.top, tolerance) &&
     candidateWidth >= visibleWidth * 0.92 &&
     candidateWidth <= outerWidth * 1.04;
+}
+
+function getShadowSafeDoorBottomY(result) {
+  if (!result) {
+    return null;
+  }
+  const outerTrim = result.outerTrimBox;
+  const current = result.doorBottomY;
+  if (!hasDimensionBoxNumbers(outerTrim)) {
+    return current;
+  }
+  const outerHeight = outerTrim.bottom - outerTrim.top;
+  const tolerance = Math.max(6, Math.min(24, outerHeight * 0.018));
+  if (!Number.isFinite(current)) {
+    return outerTrim.bottom;
+  }
+  if (current > outerTrim.bottom + tolerance) {
+    return outerTrim.bottom;
+  }
+  return current;
 }
 
 function getRequestAwareOpeningMidlineBox(boxes, dimensionData, size) {
@@ -2425,6 +2485,7 @@ function normalizeDimensionBoxes(parsed, size, dimensionData) {
     confidence: parsed.confidence || '',
     notes: parsed.notes || ''
   };
+  result.doorBottomY = getShadowSafeDoorBottomY(result);
   if (!result.outerTrimBox && !result.doorTrimConnectionBox && !result.openingMidlineBox && !result.visibleOpeningBox && !result.headerOuterBox && result.doorBottomY === null) {
     return null;
   }
@@ -2454,10 +2515,12 @@ async function detectDimensionBoxes(primaryBuffer, primaryFileID, size, job) {
               'JSON 格式：{"outerTrimBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"doorTrimConnectionBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"openingMidlineBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"visibleOpeningBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"headerOuterBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"transomTopY":整数或null,"doorBottomY":整数,"heightBottomMode":"shared|separate","bottomNotes":"...","confidence":"high|medium|low","notes":"..."}。',
               'outerTrimBox 是含包边外沿/最外侧门套包边的整体矩形。',
               'doorTrimConnectionBox 是门和包边之间的连接硬边：如果只有门洞没有见光，门洞取这条边；如果同时有门洞和见光，见光取这条边。',
-              'openingMidlineBox 是门洞尺寸在半包边/包边厚度中线位置的边界：只有同时有门洞和见光时，门洞取这条边。',
+              'openingMidlineBox 是门洞尺寸在半包边/包边厚度中线位置的边界：只有同时有门洞和见光时，门洞取这条边；它必须位于 outerTrimBox 外沿与 visibleOpeningBox/doorTrimConnectionBox 连接硬边之间，不能直接等同于 outerTrimBox，也不能直接等同于 visibleOpeningBox。',
               'visibleOpeningBox 是见光尺寸使用的门和包边之间的连接硬边，不含外侧包边；同时有门洞和见光时，见光尺寸取这一条连接硬边。',
               '边界必须来自真实实体结构线：门套外沿、门洞内沿、门扇/门框交界、门头门柱外沿。不要把投影、渐变阴影、地面接触阴影、背景灰边、光晕、压缩噪点识别成门边界；如果阴影贴着门边，取阴影内侧的真实硬边。',
-              'doorBottomY 是门体最下沿/门底统一下边界。你必须自己判断高度尺寸是否共用底部：如果底部没有下槛、台阶、门洞落差或其他额外部件，heightBottomMode 写 shared，含包边高、门洞高、见光高都应使用同一个 doorBottomY；只有实际可见底部结构导致不同高度必须落到不同底边时，才写 separate，并在 bottomNotes 说明原因。',
+              '门外天空、栏杆、展厅地毯、临时保护膜、广告牌、墙地面和拍摄背景都不是门结构，不得并入 outerTrimBox/openingMidlineBox/visibleOpeningBox。',
+              'doorBottomY 是门体最下沿/门底统一下边界。不要输出比 outerTrimBox.bottom 更靠下的阴影、投影或灰边位置；除非图片里存在真实门槛、台阶或额外底部结构，否则 doorBottomY 应落在实体门/包边底部硬边。',
+              '你必须自己判断高度尺寸是否共用底部：如果底部没有下槛、台阶、门洞落差或其他额外部件，heightBottomMode 写 shared，含包边高、门洞高、见光高都应使用同一个 doorBottomY；只有实际可见底部结构导致不同高度必须落到不同底边时，才写 separate，并在 bottomNotes 说明原因。',
               'transomTopY 是气窗最上沿，用于含气窗高；没有气窗时填 null。',
               'headerOuterBox 是门+门头+门柱的整体最外矩形，用于含门头宽/含门头高；没有门头门柱时填 null。',
               '只返回 JSON，不要解释，不要 markdown。'

@@ -164,6 +164,21 @@ function getBoundaryTolerance(doorStructure) {
   return Math.max(6, (outerTrim.right - outerTrim.left) * 0.035);
 }
 
+function isCoordinateInMidBand(value, outerValue, innerValue, tolerance) {
+  if (![value, outerValue, innerValue].every(hasNumber)) {
+    return true;
+  }
+  const low = Math.min(outerValue, innerValue);
+  const high = Math.max(outerValue, innerValue);
+  const span = high - low;
+  const precision = Math.max(4, Math.min(18, tolerance * 0.6));
+  if (span <= precision * 1.5) {
+    return value >= low - precision && value <= high + precision;
+  }
+  return value >= low + span * 0.25 - precision * 0.25 &&
+    value <= low + span * 0.75 + precision * 0.25;
+}
+
 function isReasonableDoorTrimConnectionAnchor(anchor, doorStructure) {
   if (!anchor) {
     return false;
@@ -208,6 +223,9 @@ function isReasonableOpeningMidlineAnchor(anchor, doorStructure) {
       anchor.right >= visibleOpening.right - tolerance &&
       anchor.top >= topFloor - tolerance &&
       anchor.top <= visibleOpening.top + tolerance &&
+      isCoordinateInMidBand(anchor.left, outerTrim.left, visibleOpening.left, tolerance) &&
+      isCoordinateInMidBand(anchor.right, outerTrim.right, visibleOpening.right, tolerance) &&
+      isCoordinateInMidBand(anchor.top, topFloor, visibleOpening.top, tolerance) &&
       anchorWidth >= visibleWidth * 0.92 &&
       anchorWidth <= outerWidth * 1.04;
   }

@@ -42,6 +42,7 @@ function buildDoorStructurePrompt({ doorType, viewSide, taskType, dimensionInput
     '识别真实实体硬边：门套外沿 outerTrim、门洞 opening、见光 visibleOpening、门扇 doorLeaf。',
     '可见时识别 handle、lock、transom、header；不可见或无法判断时填 null。',
     '阴影、光晕、压缩噪点、背景灰边、地面接触投影不得并入门结构边界。',
+    '门外天空、栏杆、展厅地毯、临时保护膜、广告牌、墙地面和拍摄背景都不是门结构，不得并入 outerTrim/opening/visibleOpening。',
     'shadowRegions 必须单独输出，不得作为 outerTrim/opening/visibleOpening/doorLeaf 的来源。',
     'doorBottomY 必须输出；无法判断时填 null，并设置 needsUserAdjustment=true。',
     'heightBottomMode 默认 shared。只有存在下槛、台阶、门洞落差或额外底部结构时才输出 separate。',
@@ -51,6 +52,7 @@ function buildDoorStructurePrompt({ doorType, viewSide, taskType, dimensionInput
     'dimensionAnchors 固定包含：doorTrimConnection, openingMidline。',
     'dimensionAnchors.doorTrimConnection 是门和包边之间的连接硬边矩形；只有门洞尺寸时门洞取这条边，同时有见光尺寸时见光取这条边。',
     'dimensionAnchors.openingMidline 是包边厚度中线/半包边位置矩形；只有同时存在门洞尺寸和见光尺寸时门洞取这条边。',
+    'dimensionAnchors.openingMidline 必须位于 outerTrim 外沿与 visibleOpening/doorTrimConnection 连接硬边之间，不得直接等同于 outerTrim，也不得直接等同于 visibleOpening。',
     'dimensionAnchors 的坐标必须来自实体硬边或实体厚度中线推断，不得取阴影、地面投影、背景灰边或门板内部装饰线。',
     'keypoints 固定包含：doorBottomY。modes 固定包含：heightBottomMode。',
     'box 格式固定为 {"left":number,"top":number,"right":number,"bottom":number} 或 null。'
@@ -64,6 +66,7 @@ function buildDoorStructureRefinementPrompt({ doorType, viewSide, taskType, imag
   const heuristicText = heuristicStructure
     ? JSON.stringify({
       boxes: heuristicStructure.boxes || {},
+      dimensionAnchors: heuristicStructure.dimensionAnchors || {},
       keypoints: heuristicStructure.keypoints || {},
       modes: heuristicStructure.modes || {},
       confidence: heuristicStructure.confidence || {},
@@ -78,10 +81,11 @@ function buildDoorStructureRefinementPrompt({ doorType, viewSide, taskType, imag
     heuristicText,
     '尺寸标注边界定义：',
     '- outerTrim：含包边、门头、门柱、外框装饰在内的整体门体最外硬边；不要包含阴影、背景灰边、墙面、地面投影。',
+    '- 如果图片里有门外天空、栏杆、展厅地毯、临时保护膜、广告牌、墙地面或拍摄背景，它们只能作为背景排除，不属于 outerTrim/opening/visibleOpening。',
     '- opening：门洞/门框结构边界。对于带门头、气窗或上横梁的门，opening.top 应落在门洞开始处的横向硬边，不要落在最上方拱头或背景上沿；如果无法稳定判断半包边位置，可先贴近门洞结构硬边。',
     '- visibleOpening：见光尺寸边界，也就是门和包边之间的连接硬边；visibleOpening.top 应落在门与上包边连接处或门扇可见区域上沿。',
     '- dimensionAnchors.doorTrimConnection：与 visibleOpening 的取线含义一致，必须贴门和包边之间的真实连接硬边；如果 visibleOpening 被门板纹理或装饰线干扰，用这个锚点给出更可靠的取线框。',
-    '- dimensionAnchors.openingMidline：半包边/包边厚度中线位置。左右边界应在 outerTrim 外沿与 doorTrimConnection/visibleOpening 连接硬边之间；上边界应在上包边外沿或 opening.top 与 visibleOpening.top 之间；不得落到门板内部横纹、玻璃边、阴影或背景灰边。',
+    '- dimensionAnchors.openingMidline：半包边/包边厚度中线位置。左右边界应在 outerTrim 外沿与 doorTrimConnection/visibleOpening 连接硬边之间；上边界应在上包边外沿或 opening.top 与 visibleOpening.top 之间；不得直接等同于 outerTrim 或 visibleOpening，不得落到门板内部横纹、玻璃边、阴影或背景灰边。',
     '- opening.left/right 必须取整个门洞左右硬边，不得取中缝、门扇分缝、玻璃竖线、装饰线、把手、锁体或局部门板线条。',
     '- visibleOpening.left/right 必须取整组可见开口的左右边界，不得只圈单个门扇、单个玻璃窗、单侧装饰区域或中间窄区域。',
     '- 双开门、子母门、四开门、六开门的 opening/visibleOpening 应跨完整门组；除非图片中真实门洞就是窄单扇，否则宽度不能被中间竖向装饰边缘截断。',
