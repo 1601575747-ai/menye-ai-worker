@@ -609,12 +609,25 @@ function extractColorReferenceCode(job) {
   return extractColorReferenceTarget(job).value;
 }
 
+function hasDoorSurfaceColorPreserveText(text) {
+  const source = String(text || '');
+  return /(?:门体|门扇|门板|整门|门面|门)[^。；，,.!?！？]{0,12}(?:颜色|色)[^。；，,.!?！？]{0,16}(?:保持不变|不变|别变|不要变|不能变|不改|不要改|别改|原样|保留|维持|锁定)|(?:不改变|不要改变|别改变|不能改变|不改|不要改|别改|保持|保留|维持|锁定)[^。；，,.!?！？]{0,16}(?:门体|门扇|门板|整门|门面|门)?[^。；，,.!?！？]{0,8}(?:颜色|色)/.test(source);
+}
+
+function hasPositiveDoorSurfaceColorText(text) {
+  const source = String(text || '');
+  return /(?:门体|门扇|门板|整门|门面|门)[^。；，,.!?！？]{0,16}(?:颜色|色)[^。；，,.!?！？]{0,16}(?:改成|换成|调成|做成|改为|设为|使用|用|按|参考|选择|选|色卡|色号|编号)|(?:颜色参考|参考颜色|参考色|色卡|色号|编号|改色|换色|调色|变色|颜色不对|颜色再|颜色偏)/i.test(source);
+}
+
 function hasDoorSurfaceColorTextRequest(job) {
   const text = removeBackgroundColorText(getColorRequestText(job));
+  if (hasDoorSurfaceColorPreserveText(text) && !hasPositiveDoorSurfaceColorText(text)) {
+    return false;
+  }
   if (extractColorReferenceTarget(job).value) {
     return true;
   }
-  return /门.*颜色|颜色.*门|颜色参考|参考颜色|参考色|色卡|色号|编号|改色|换色|调色|变色|颜色不对|颜色再|颜色偏/i.test(text);
+  return hasPositiveDoorSurfaceColorText(text);
 }
 
 function getReferenceStylePrompt(slotId, options = {}) {

@@ -502,6 +502,45 @@ assert(backgroundLockColorPrompt.includes('锁体/智能锁：必须'));
 assert(backgroundLockColorPrompt.includes('结构化需求确认：客户上传了锁体/智能锁细节图'));
 assert(backgroundLockColorPrompt.includes('结构化需求确认：客户上传了颜色参考图'));
 
+const backgroundEdgeColorJob = {
+  taskType: 'scene-effect',
+  templateType: '场景效果图',
+  doorType: '双开门',
+  targetParts: ['background', 'edge-trim', 'door-color'],
+  requirement: '背景按参考图，包边按包边参考图结构，门体和包边颜色按色卡统一',
+  referenceImages: [
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' },
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'edge-trim-detail', originalImageFileID: 'cloud://mock/edge.png' },
+    { slotId: 'color-sample', originalImageFileID: 'cloud://mock/color.png' }
+  ]
+};
+assert.strictEqual(shouldUseDirectBackgroundComposite(backgroundEdgeColorJob), false);
+const backgroundEdgeColorDecision = getPromptDecisionSummary(backgroundEdgeColorJob);
+assert.strictEqual(backgroundEdgeColorDecision.hasBackgroundReference, true);
+assert.strictEqual(backgroundEdgeColorDecision.hasEffectiveEdgeTrimDetail, true);
+assert.strictEqual(backgroundEdgeColorDecision.colorSampleAppliesToEdgeTrim, true);
+const backgroundEdgeColorPrompt = buildDoorImageInstruction(backgroundEdgeColorJob, {
+  source: 'background-doorway-test',
+  left: 120,
+  top: 80,
+  right: 860,
+  bottom: 980
+}, null, [
+  { slotId: 'background-reference', label: '背景', applyDescription: '以背景门位为最终画布' },
+  { slotId: 'edge-trim-detail', label: '包边', structure: '三层窄边压线', applyDescription: '迁移包边结构' },
+  { slotId: 'color-sample', label: '颜色', color: '浅木色', colorFamily: '木色', applyDescription: '统一浅木色' }
+], null);
+assert(backgroundEdgeColorPrompt.includes('输入图1是背景参考图'));
+assert(backgroundEdgeColorPrompt.includes('输入图2是整门上下文图'));
+assert(backgroundEdgeColorPrompt.includes('包边：必须'));
+assert(backgroundEdgeColorPrompt.includes('包边验收标准'));
+assert(backgroundEdgeColorPrompt.includes('背景参考图只提供背景底图、目标门位、透视、接地和光影参考'));
+assert(backgroundEdgeColorPrompt.includes('包边层只改包边结构'));
+assert(backgroundEdgeColorPrompt.includes('颜色层默认统一整门可见门面颜色'));
+assert(backgroundEdgeColorPrompt.includes('背景层只改背景'));
+assert(backgroundEdgeColorPrompt.includes('最终结果应等于：输入图1背景底图 + 输入图2整门抠图贴入输入图1的 mask 门位区域'));
+
 const backgroundHeaderIndependentPrompt = buildDoorImageInstruction({
   taskType: 'scene-effect',
   templateType: '场景效果图',
@@ -529,6 +568,51 @@ assert(backgroundHeaderIndependentPrompt.includes('背景参考图只提供背�
 assert(backgroundHeaderIndependentPrompt.includes('门头/门柱：必须'));
 assert(backgroundHeaderIndependentPrompt.includes('门头/门柱参考图中的颜色只允许作用到门头/门柱/外框装饰自身'));
 assert(!backgroundHeaderIndependentPrompt.includes('最高优先级门头/门柱同色规则'));
+
+const textureOnlyNoColorDecision = getPromptDecisionSummary({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '单开门',
+  targetParts: ['material-texture'],
+  requirement: '只参考材质纹理，不改变门体颜色',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'texture-reference', originalImageFileID: 'cloud://mock/texture.png' }
+  ]
+});
+assert.strictEqual(textureOnlyNoColorDecision.allowDoorSurfaceColorChange, false);
+const textureOnlyNoColorPrompt = buildDoorImageInstruction({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '单开门',
+  targetParts: ['material-texture'],
+  requirement: '只参考材质纹理，不改变门体颜色',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'texture-reference', originalImageFileID: 'cloud://mock/texture.png' }
+  ]
+}, null, null, [
+  { slotId: 'texture-reference', label: '材质纹理', color: '深棕色', material: '木纹', structure: '竖向细木纹', applyDescription: '迁移竖向细木纹' }
+], null);
+assert(textureOnlyNoColorPrompt.includes('材质纹理：必须'));
+assert(textureOnlyNoColorPrompt.includes('材质纹理参考图默认不是颜色参考'));
+assert(textureOnlyNoColorPrompt.includes('门体可见颜色仍按原整门图保持'));
+assert(textureOnlyNoColorPrompt.includes('最高优先级门体颜色冻结'));
+
+const structureOnlyNoColorDecision = getPromptDecisionSummary({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '单开门',
+  targetParts: ['panel-style', 'glass-grille', 'material-texture'],
+  requirement: '门板造型、气窗和材质纹理都按参考图',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'panel-style-detail', originalImageFileID: 'cloud://mock/panel.png' },
+    { slotId: 'glass-grille-detail', originalImageFileID: 'cloud://mock/glass.png' },
+    { slotId: 'texture-reference', originalImageFileID: 'cloud://mock/texture.png' }
+  ]
+});
+assert.strictEqual(structureOnlyNoColorDecision.allowDoorSurfaceColorChange, false);
 
 const handleReferencePrompt = buildDoorImageInstruction({
   taskType: 'handle-replacement',
