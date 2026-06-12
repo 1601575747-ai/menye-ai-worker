@@ -427,6 +427,10 @@ function getDetectableReferenceSlotIds() {
     'glass-grille-detail',
     'header-column-detail',
     'texture-reference',
+    'left-leaf-detail',
+    'right-leaf-detail',
+    'child-leaf-detail',
+    'middle-join-detail',
     'background-reference'
   ];
 }
@@ -658,6 +662,46 @@ function getReferenceStylePrompt(slotId, options = {}) {
         '必须识别纹理方向、木纹/拉丝/颗粒类型、纹理密度、粗细、主次纹理色差、表面光泽、哑光/亮光/肤感/金属/木质等材质观感。',
         '颜色字段只描述纹理照片中的可见颜色；除非客户明确要求或同时把这张图当作颜色参考，否则不要把材质纹理参考图的颜色当成最终门体颜色来源。',
         'applyDescription 必须强调只迁移材质纹理和表面质感，不改变第一张整门图的门型结构、线条数量、包边、把手、锁体、玻璃或背景。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
+    case 'left-leaf-detail':
+      return [
+        '请识别这张左门扇细节参考图中的局部门扇外观特征，只返回 JSON。',
+        '这张图只用于补充左门扇局部细节，不是整门换款参考，也不是改变门扇数量、比例或中缝位置的依据。',
+        'JSON 格式必须为：{"part":"左门扇细节","sourceType":"近景或整门参考","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        '必须识别左门扇上的门板线条、纹理方向、玻璃/格栅、装饰块、压线、局部五金避让、材质和表面质感。',
+        '如果参考图包含整扇门，只能提取左门扇对应局部细节；不能迁移整门比例、门框、包边、把手、锁体、背景或开门方向。',
+        'applyDescription 必须说明如何把该细节约束到第一张整门图的左门扇对应区域，同时保持第一张整门图的门扇数量、左右比例、中缝位置、把手和锁体位置不变。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
+    case 'right-leaf-detail':
+      return [
+        '请识别这张右门扇细节参考图中的局部门扇外观特征，只返回 JSON。',
+        '这张图只用于补充右门扇局部细节，不是整门换款参考，也不是改变门扇数量、比例或中缝位置的依据。',
+        'JSON 格式必须为：{"part":"右门扇细节","sourceType":"近景或整门参考","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        '必须识别右门扇上的门板线条、纹理方向、玻璃/格栅、装饰块、压线、局部五金避让、材质和表面质感。',
+        '如果参考图包含整扇门，只能提取右门扇对应局部细节；不能迁移整门比例、门框、包边、把手、锁体、背景或开门方向。',
+        'applyDescription 必须说明如何把该细节约束到第一张整门图的右门扇对应区域，同时保持第一张整门图的门扇数量、左右比例、中缝位置、把手和锁体位置不变。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
+    case 'child-leaf-detail':
+      return [
+        '请识别这张子母门小门扇细节参考图中的局部门扇外观特征，只返回 JSON。',
+        '这张图只用于补充子母门小门扇/子门局部细节，不是整门换款参考，也不是把子母比例改成平分双开的依据。',
+        'JSON 格式必须为：{"part":"小门扇细节","sourceType":"近景或整门参考","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        '必须识别小门扇上的门板线条、纹理方向、玻璃/格栅、装饰块、压线、局部五金避让、材质和表面质感。',
+        '如果参考图包含整扇门，只能提取小门扇对应局部细节；不能迁移整门比例、门框、包边、把手、锁体、背景或开门方向。',
+        'applyDescription 必须说明如何把该细节约束到第一张整门图的小门扇对应区域，同时保持第一张整门图的子母门宽窄比例、中缝位置、把手和锁体位置不变。',
+        '不要解释，不要输出 markdown。'
+      ].join('\n');
+    case 'middle-join-detail':
+      return [
+        '请识别这张中缝/拼接细节参考图中的门缝收口特征，只返回 JSON。',
+        '这张图只用于中缝、拼接条、门缝收口、对缝、压条、止口和局部衔接方式，不是整门换款参考，也不是改变门扇数量或比例的依据。',
+        'JSON 格式必须为：{"part":"中缝/拼接细节","sourceType":"近景或整门参考","color":"...","colorFamily":"...","material":"...","finish":"...","shape":"...","structure":"...","profile":"...","edge":"...","details":"...","sampleBox":{"left":0.00,"top":0.00,"right":1.00,"bottom":1.00},"applyDescription":"..."}。',
+        '必须识别中缝宽窄、压条层次、止口方向、凹凸关系、收边倒角、拼接材质、颜色、阴影缝和与左右门扇的衔接方式。',
+        '如果参考图包含整扇门，只能提取中缝/拼接区域；不能迁移门扇主体、包边、把手、锁体、气窗、背景或整门比例。',
+        'applyDescription 必须说明如何把该中缝/拼接细节约束到第一张整门图已有中缝或拼缝位置，同时保持第一张整门图的门扇数量、每扇宽窄比例、把手和锁体位置不变。',
         '不要解释，不要输出 markdown。'
       ].join('\n');
     case 'background-reference':
@@ -2284,6 +2328,14 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
         ? `系统识别到${style.label || style.part || '门头/门柱参考图'}特征：来源类型=${style.sourceType || '未识别'}；门头/门柱局部可见颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；颜色字段和取样色只允许用于门头、门楣、门柱、立柱、外框装饰自身，不得作为门扇/门体/把手/锁体/气窗/背景改色来源；执行描述=${style.applyDescription || '只应用到门头、门楣、门柱、立柱、外框装饰及其衔接区域，不作为门扇款式、门体颜色、把手、锁体、气窗或背景参考'}。`
       : style.slotId === 'texture-reference'
         ? `系统识别到${style.label || style.part || '材质纹理参考图'}特征：材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；纹理方向/结构=${style.structure || '未识别'}；纹理层次=${style.profile || '未识别'}；边缘/纹理过渡=${style.edge || '未识别'}；关键纹理细节=${style.details || '未识别'}；可见颜色=${style.color || '未识别'}；执行描述=${style.applyDescription || '只迁移材质纹理和表面质感，不把该参考图当成门型、包边、把手、锁体或玻璃参考；除非客户明确要求，不把该图颜色作为最终门体颜色来源'}。`
+      : style.slotId === 'left-leaf-detail'
+        ? `系统识别到${style.label || style.part || '左门扇细节参考图'}特征：来源类型=${style.sourceType || '未识别'}；局部可见颜色=${style.color || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；门扇局部形态=${style.shape || '未识别'}；线条/纹理/玻璃结构=${style.structure || '未识别'}；凹凸/压线层次=${style.profile || '未识别'}；边角/收口=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只应用到第一张整门图左门扇对应区域，保持门扇数量、左右比例、中缝、把手、锁体、包边和背景不变'}。`
+      : style.slotId === 'right-leaf-detail'
+        ? `系统识别到${style.label || style.part || '右门扇细节参考图'}特征：来源类型=${style.sourceType || '未识别'}；局部可见颜色=${style.color || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；门扇局部形态=${style.shape || '未识别'}；线条/纹理/玻璃结构=${style.structure || '未识别'}；凹凸/压线层次=${style.profile || '未识别'}；边角/收口=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只应用到第一张整门图右门扇对应区域，保持门扇数量、左右比例、中缝、把手、锁体、包边和背景不变'}。`
+      : style.slotId === 'child-leaf-detail'
+        ? `系统识别到${style.label || style.part || '小门扇细节参考图'}特征：来源类型=${style.sourceType || '未识别'}；局部可见颜色=${style.color || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；小门扇局部形态=${style.shape || '未识别'}；线条/纹理/玻璃结构=${style.structure || '未识别'}；凹凸/压线层次=${style.profile || '未识别'}；边角/收口=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只应用到第一张整门图小门扇/子门对应区域，保持子母宽窄比例、中缝、把手、锁体、包边和背景不变'}。`
+      : style.slotId === 'middle-join-detail'
+        ? `系统识别到${style.label || style.part || '中缝/拼接细节参考图'}特征：来源类型=${style.sourceType || '未识别'}；局部可见颜色=${style.color || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；中缝/拼接形态=${style.shape || '未识别'}；止口/压条/收口结构=${style.structure || '未识别'}；凹凸/层次=${style.profile || '未识别'}；边角/对缝=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只应用到第一张整门图已有中缝或拼缝位置，保持门扇数量、每扇宽窄比例、把手、锁体、门体颜色、包边和背景不变'}。`
       : style.slotId === 'background-reference'
         ? `系统识别到${style.label || style.part || '背景参考图'}特征：来源类型=${style.sourceType || '未识别'}；空间/构图=${style.shape || '未识别'}；墙地面/结构=${style.structure || '未识别'}；空间层次=${style.profile || '未识别'}；边界/衔接=${style.edge || '未识别'}；主色=${style.color || '未识别'}；材质=${style.material || '未识别'}；光线/质感=${style.finish || '未识别'}；关键背景细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '以背景参考图为最终背景底图，只在目标门位抠图贴入第一张整门图的门，不重绘墙面、地面、家具、装饰和整体空间；不把该图当成门款、包边、把手、锁体、玻璃、门体颜色或材质参考'}。`
       : `系统识别到${style.label || style.part || '参考图'}特征：${style.referenceCode || style.referenceName || style.targetColorCode ? `指定/匹配颜色标签=${style.referenceCode || style.referenceName || style.targetColorCode}；匹配置信度=${style.codeMatchConfidence || '未说明'}；` : ''}来源类型=${style.sourceType || '未识别'}；颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；颜色大类=${style.colorFamily || '未识别'}；冷暖色偏=${style.undertone || '未识别'}；明度=${style.brightness || '未识别'}；饱和度=${style.saturation || '未识别'}；色相锁定=${style.hueLock || '未识别'}；明暗/灰度锁定=${style.toneLock || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '未识别'}。`
@@ -2422,6 +2474,10 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
     hasGlassGrilleDetail ? '气窗' : '',
     hasHeaderColumnDetail ? '门头/门柱' : '',
     hasTextureReference ? '材质纹理' : '',
+    hasLeftLeafDetail ? '左门扇细节' : '',
+    hasRightLeafDetail ? '右门扇细节' : '',
+    hasChildLeafDetail ? '小门扇细节' : '',
+    hasMiddleJoinDetail ? '中缝/拼接细节' : '',
     useDefaultWhiteBoardBackground ? '白板背景' : (hasBackgroundReference || backgroundInfo || /抠图|扣图|白底|透明底|去背景|去掉背景|去除背景/.test(requirementText) ? '背景/抠图' : '')
   ].filter(Boolean);
   targetPartText = activeTargetParts.length
@@ -2557,6 +2613,10 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
     hasGlassGrilleDetail ? '气窗：必须按气窗细节图处理玻璃、镂空、格栅、透光窗或对应装饰区域' : '',
     hasHeaderColumnDetail ? '门头/门柱：必须按门头/门柱细节图处理双开门门头、门楣、门柱、立柱或外框装饰区域' : '',
     hasTextureReference ? '材质纹理：必须按材质纹理参考图处理门体表面的木纹、拉丝、颗粒、肤感、哑光/亮光等纹理和表面质感' : '',
+    hasLeftLeafDetail ? '左门扇细节：必须按左门扇细节图补充或融合左门扇局部线条、纹理、玻璃、装饰或材质细节；只能作用于左门扇对应区域，不能改变整门门扇数量、左右比例、中缝、把手、锁体和包边' : '',
+    hasRightLeafDetail ? '右门扇细节：必须按右门扇细节图补充或融合右门扇局部线条、纹理、玻璃、装饰或材质细节；只能作用于右门扇对应区域，不能改变整门门扇数量、左右比例、中缝、把手、锁体和包边' : '',
+    hasChildLeafDetail ? '小门扇细节：必须按小门扇细节图补充或融合子母门小门扇局部线条、纹理、玻璃、装饰或材质细节；只能作用于小门扇对应区域，不能把子母比例改成平分门' : '',
+    hasMiddleJoinDetail ? '中缝/拼接细节：必须按中缝/拼接细节图处理门缝收口、拼接条、对缝、压条、止口或局部衔接；只能作用于已有中缝/拼缝位置，不能改变门扇数量、每扇宽窄比例、门体颜色和五金位置' : '',
     hasBackgroundReference ? '背景：必须以背景参考图为最终背景底图，把第一张整门图中的门抠出并贴入背景图目标门位；即使客户没有填写背景信息，只要上传了背景参考图，也必须执行抠图贴合；背景参考图不能作为门款或门体部件参考，也不能被整体重绘' : '',
     hasColorSample
         ? (edgeTrimColorProtectedFromColorSample
@@ -2817,6 +2877,12 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
     hasTextureReference
       ? '冲突消解：材质纹理参考图只打开“纹理/表面质感”变化权限，不自动打开“门体改色”权限；如果没有颜色参考图或明确文字改色要求，门体可见颜色仍按原整门图保持，只让纹理方向、粗细、木纹/拉丝/颗粒和光泽质感接近参考。'
       : '',
+    hasLeftLeafDetail || hasRightLeafDetail || hasChildLeafDetail
+      ? '冲突消解：左门扇、右门扇或小门扇细节图只打开对应门扇局部细节变化权限；不能因为这些参考图改变门扇数量、每扇宽窄比例、中缝位置、把手位置、锁体位置、包边、背景或整门门款。'
+      : '',
+    hasMiddleJoinDetail
+      ? '冲突消解：中缝/拼接细节图只打开已有中缝或拼缝位置的局部收口变化权限；不能因为中缝参考图改变门扇数量、每扇宽窄比例、门面颜色、门板整体造型、把手位置、锁体位置、包边或背景。'
+      : '',
     hasLockDetail
       ? (lockReferenceIsHandleIntegrated
         ? '冲突消解：锁体/智能锁参考图被识别为把手一体式智能锁时，只额外打开“一体式把手锁整体”变化权限；不允许因锁具参考图改变门扇颜色、门板线条、包边、玻璃或背景，也不允许删除未与智能锁安装区冲突的另一侧原把手。'
@@ -2870,6 +2936,18 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
     hasTextureReference
       ? '结构化需求确认：客户上传了材质纹理参考图，因此“识别并迁移门体表面纹理和材质观感”本身已经是明确需求；默认不把该图颜色当成门体改色来源。'
       : '',
+    hasLeftLeafDetail
+      ? '结构化需求确认：客户上传了左门扇细节图，因此“识别并融合左门扇局部线条、纹理、玻璃、装饰或材质细节”本身已经是明确需求；该任务只作用于左门扇对应区域，不等于改变整门比例。'
+      : '',
+    hasRightLeafDetail
+      ? '结构化需求确认：客户上传了右门扇细节图，因此“识别并融合右门扇局部线条、纹理、玻璃、装饰或材质细节”本身已经是明确需求；该任务只作用于右门扇对应区域，不等于改变整门比例。'
+      : '',
+    hasChildLeafDetail
+      ? '结构化需求确认：客户上传了小门扇细节图，因此“识别并融合子母门小门扇局部线条、纹理、玻璃、装饰或材质细节”本身已经是明确需求；该任务只作用于小门扇对应区域，不等于改变子母比例。'
+      : '',
+    hasMiddleJoinDetail
+      ? '结构化需求确认：客户上传了中缝/拼接细节图，因此“识别并融合门缝收口、拼接条、对缝、压条、止口或局部衔接方式”本身已经是明确需求；该任务只作用于已有中缝/拼缝位置，不等于改变门扇数量或比例。'
+      : '',
     hasBackgroundReference
       ? '结构化需求确认：客户上传了背景参考图，因此“把主门抠图贴入背景图目标门位”本身已经是明确需求；背景图是最终背景底图，不是门款或门体部件参考，也不是要重绘的新背景。'
       : ''
@@ -2889,11 +2967,11 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
       : '',
     allowDoorSurfaceColorChange
       ? (edgeTrimColorProtectedFromColorSample
-        ? '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并按客户语义判断包边独立颜色；颜色层按颜色参考图调整门扇/门体可见表面，但不得覆盖包边独立颜色；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、气窗层、门头/门柱层、材质纹理层仅在上传对应参考图时改对应区域。'
-        : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域；颜色层按颜色参考图统一调整整门可见门面，默认覆盖包边并让包边跟门体同色；只有客户明确要求包边独立颜色或按包边参考图颜色时，包边颜色才不参与统一；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、气窗层、门头/门柱层、材质纹理层仅在上传对应参考图时改对应区域。')
+        ? '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并按客户语义判断包边独立颜色；颜色层按颜色参考图调整门扇/门体可见表面，但不得覆盖包边独立颜色；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、气窗层、门头/门柱层、材质纹理层、左/右/小门扇细节层和中缝/拼接层仅在上传对应参考图时改对应区域。'
+        : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域；颜色层按颜色参考图统一调整整门可见门面，默认覆盖包边并让包边跟门体同色；只有客户明确要求包边独立颜色或按包边参考图颜色时，包边颜色才不参与统一；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、气窗层、门头/门柱层、材质纹理层、左/右/小门扇细节层和中缝/拼接层仅在上传对应参考图时改对应区域。')
       : hasBackgroundReference
-        ? '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：背景层必须把第一张整门图的门体抠出并贴入背景参考图目标门位；门体本身不得改色、重画或换款，只允许整体缩放、透视拉伸、旋转、轻微裁切、边缘融合和接地阴影；把手层、包边层、锁体层、门板造型层、气窗层、门头/门柱层、材质纹理层仅在上传对应参考图时改对应区域。'
-        : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并让包边颜色匹配第一张整门图的原门体颜色；本次没有颜色层，门扇/门体颜色不得改变；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、气窗层、门头/门柱层、材质纹理层仅在上传对应参考图时改对应区域。',
+        ? '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：背景层必须把第一张整门图的门体抠出并贴入背景参考图目标门位；门体本身不得改色、重画或换款，只允许整体缩放、透视拉伸、旋转、轻微裁切、边缘融合和接地阴影；把手层、包边层、锁体层、门板造型层、气窗层、门头/门柱层、材质纹理层、左/右/小门扇细节层和中缝/拼接层仅在上传对应参考图时改对应区域。'
+        : '允许变化项只限于已上传参考图、背景信息或客户文字明确要求的对象：包边层只改包边/门套线/收口条/压线区域，并让包边颜色匹配第一张整门图的原门体颜色；本次没有颜色层，门扇/门体颜色不得改变；背景层只在上传背景参考图、填写背景信息或要求抠图/白底时改背景；把手层只改把手区域；锁体层、门板造型层、气窗层、门头/门柱层、材质纹理层、左/右/小门扇细节层和中缝/拼接层仅在上传对应参考图时改对应区域。',
     freezeDoorSurfaceColor ? '门体颜色冻结项：未上传颜色参考图且未明确要求改门体颜色时，门扇/门体颜色不属于允许变化项；气窗参考图、门头/门柱参考图、包边参考图、门板造型图、锁体图、把手图、材质纹理图和背景图都不能作为门体改色来源；包边同门同色时，只能改包边颜色去匹配第一张整门图的原门体颜色，不能反向改变门体颜色。' : '',
     '如果参考图中的包边、颜色、把手、锁体、门板造型、气窗、门头/门柱、材质纹理或背景与第一张整门图的基础门型冲突，必须优先保留第一张整门图的门体外轮廓、比例、透视和门框关系；只有对应目标区域允许局部融合，不能扩展成整门重画。',
     hasPanelStyleDetail || hasGlassGrilleDetail || hasHeaderColumnDetail

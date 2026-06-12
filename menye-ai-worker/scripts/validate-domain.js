@@ -244,7 +244,10 @@ const multiPartPromptJob = Object.freeze({
     Object.freeze({ slotId: 'edge-trim-detail', originalImageFileID: 'cloud://mock/edge.png' }),
     Object.freeze({ slotId: 'glass-grille-detail', originalImageFileID: 'cloud://mock/glass.png' }),
     Object.freeze({ slotId: 'handle-detail', originalImageFileID: 'cloud://mock/handle.png' }),
-    Object.freeze({ slotId: 'color-sample', originalImageFileID: 'cloud://mock/color.png' })
+    Object.freeze({ slotId: 'color-sample', originalImageFileID: 'cloud://mock/color.png' }),
+    Object.freeze({ slotId: 'left-leaf-detail', originalImageFileID: 'cloud://mock/left.png' }),
+    Object.freeze({ slotId: 'right-leaf-detail', originalImageFileID: 'cloud://mock/right.png' }),
+    Object.freeze({ slotId: 'middle-join-detail', originalImageFileID: 'cloud://mock/join.png' })
   ])
 });
 assert.strictEqual(normalizeTaskType(multiPartPromptJob), 'parts-compose');
@@ -255,7 +258,10 @@ const multiPartPrompt = buildDoorImageInstruction(multiPartPromptJob, null, null
   { slotId: 'header-column-detail', label: '门头/门柱', color: '深灰色', applyDescription: '迁移门头门柱结构' },
   { slotId: 'edge-trim-detail', label: '包边', color: '红棕色', applyDescription: '迁移包边结构' },
   { slotId: 'glass-grille-detail', label: '气窗', color: '灰玻', applyDescription: '迁移气窗格栅' },
-  { slotId: 'color-sample', label: '门体颜色', color: '浅木色', colorFamily: '木色', applyDescription: '统一浅木色' }
+  { slotId: 'color-sample', label: '门体颜色', color: '浅木色', colorFamily: '木色', applyDescription: '统一浅木色' },
+  { slotId: 'left-leaf-detail', label: '左门扇细节', structure: '左门扇竖向细压线', applyDescription: '融合左门扇竖向细压线' },
+  { slotId: 'right-leaf-detail', label: '右门扇细节', structure: '右门扇玻璃格栅', applyDescription: '融合右门扇玻璃格栅' },
+  { slotId: 'middle-join-detail', label: '中缝/拼接细节', structure: '窄中缝压条', applyDescription: '融合窄中缝压条' }
 ], null);
 assert(multiPartPrompt.includes('结构化强制任务清单'));
 assert(multiPartPrompt.includes('门头/门柱覆盖包边规则'));
@@ -263,11 +269,41 @@ assert(multiPartPrompt.includes('把手'));
 assert(multiPartPrompt.includes('气窗'));
 assert(multiPartPrompt.includes('门头/门柱'));
 assert(multiPartPrompt.includes('整门颜色'));
+assert(multiPartPrompt.includes('左门扇细节：必须'));
+assert(multiPartPrompt.includes('右门扇细节：必须'));
+assert(multiPartPrompt.includes('中缝/拼接细节：必须'));
+assert(multiPartPrompt.includes('系统识别到左门扇细节'));
+assert(multiPartPrompt.includes('系统识别到右门扇细节'));
+assert(multiPartPrompt.includes('系统识别到中缝/拼接细节'));
+assert(multiPartPrompt.includes('结构化需求确认：客户上传了左门扇细节图'));
+assert(multiPartPrompt.includes('结构化需求确认：客户上传了右门扇细节图'));
+assert(multiPartPrompt.includes('结构化需求确认：客户上传了中缝/拼接细节图'));
+assert(multiPartPrompt.includes('左/右/小门扇细节层和中缝/拼接层仅在上传对应参考图时改对应区域'));
 assert(multiPartPrompt.includes('门部件拼接效果图默认白板背景'));
 assert(multiPartPrompt.includes('最终颜色覆盖自检'));
 assert(multiPartPrompt.includes('门头/门柱/外框装饰必须先按门头/门柱参考图处理结构，再被颜色参考图统一校色'));
 assert(!multiPartPrompt.includes('系统识别到包边参考图特征'));
 assert(!multiPartPrompt.includes('包边：必须识别包边参考图'));
+
+const motherChildPrompt = buildDoorImageInstruction({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '子母门',
+  requirement: '小门扇按参考图，中缝按参考图',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'child-leaf-detail', originalImageFileID: 'cloud://mock/child.png' },
+    { slotId: 'middle-join-detail', originalImageFileID: 'cloud://mock/join.png' }
+  ]
+}, null, null, [
+  { slotId: 'child-leaf-detail', label: '小门扇细节', structure: '小门扇窄框压线', applyDescription: '融合小门扇窄框压线' },
+  { slotId: 'middle-join-detail', label: '中缝/拼接细节', structure: '子母门止口中缝', applyDescription: '融合子母门止口中缝' }
+], null);
+assert(motherChildPrompt.includes('小门扇细节：必须'));
+assert(motherChildPrompt.includes('中缝/拼接细节：必须'));
+assert(motherChildPrompt.includes('系统识别到小门扇细节'));
+assert(motherChildPrompt.includes('结构化需求确认：客户上传了小门扇细节图'));
+assert(motherChildPrompt.includes('不能把子母比例改成平分门'));
 
 const backgroundPrompt = buildDoorImageInstruction({
   taskType: 'background-replace',
@@ -407,6 +443,36 @@ assert.strictEqual(openingWithVisibleOpeningRule.sourceBoundary.to.value, 880);
 assert.strictEqual(openingWithVisibleVisibleRule.sourceBoundary.box, 'visibleOpening');
 assert.strictEqual(openingWithVisibleVisibleRule.sourceBoundary.from.value, 160);
 assert.strictEqual(openingWithVisibleVisibleRule.sourceBoundary.to.value, 840);
+
+const openingHeightWithVisibleWidthOnly = buildDimensionRules({
+  doorType: '单开门',
+  viewSide: 'front',
+  inputs: {
+    openingHeight: '2100',
+    visibleOpeningWidth: '800'
+  },
+  doorStructure: mockDoorStructure
+});
+const mixedAxisOpeningHeightRule = openingHeightWithVisibleWidthOnly.rules.find((rule) => rule.field === 'openingHeight');
+assert(mixedAxisOpeningHeightRule);
+assert.strictEqual(mixedAxisOpeningHeightRule.sourceBoundary.box, 'visibleOpening');
+assert.strictEqual(mixedAxisOpeningHeightRule.sourceBoundary.boundaryMode, 'doorTrimConnection');
+assert.strictEqual(mixedAxisOpeningHeightRule.sourceBoundary.from.value, mockDoorStructure.boxes.visibleOpening.top);
+
+const openingWidthWithVisibleHeightOnly = buildDimensionRules({
+  doorType: '单开门',
+  viewSide: 'front',
+  inputs: {
+    openingWidth: '900',
+    visibleOpeningHeight: '2000'
+  },
+  doorStructure: mockDoorStructure
+});
+const mixedAxisOpeningWidthRule = openingWidthWithVisibleHeightOnly.rules.find((rule) => rule.field === 'openingWidth');
+assert(mixedAxisOpeningWidthRule);
+assert.strictEqual(mixedAxisOpeningWidthRule.sourceBoundary.box, 'visibleOpening');
+assert.strictEqual(mixedAxisOpeningWidthRule.sourceBoundary.boundaryMode, 'doorTrimConnection');
+assert.strictEqual(mixedAxisOpeningWidthRule.sourceBoundary.from.value, mockDoorStructure.boxes.visibleOpening.left);
 
 const wallOnly = buildDimensionRules({
   doorType: 'single',

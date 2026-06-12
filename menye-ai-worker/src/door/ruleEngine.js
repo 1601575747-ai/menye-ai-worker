@@ -214,7 +214,7 @@ function getOpeningBoundaryBox({ field, doorStructure, hasVisibleOpeningRequest 
   };
 }
 
-function buildLineBoundary({ field, doorStructure, hasVisibleOpeningRequest }) {
+function buildLineBoundary({ field, doorStructure, hasSameAxisVisibleOpeningRequest }) {
   const boundaryConfig = FIELD_BOUNDARY_MAP[field];
   if (!boundaryConfig) {
     return {
@@ -226,7 +226,7 @@ function buildLineBoundary({ field, doorStructure, hasVisibleOpeningRequest }) {
   const openingBoundary = getOpeningBoundaryBox({
     field,
     doorStructure,
-    hasVisibleOpeningRequest
+    hasVisibleOpeningRequest: hasSameAxisVisibleOpeningRequest
   });
   let box = openingBoundary.box;
   let sourceBoxKey = openingBoundary.sourceBoxKey || boxKey;
@@ -323,8 +323,14 @@ function buildDimensionRules({ doorType, viewSide, inputs, doorStructure } = {})
   });
   const issues = normalizedInputs.errors.slice();
   const rules = [];
-  const hasVisibleOpeningRequest = Object.prototype.hasOwnProperty.call(normalizedInputs.values, DimensionField.VISIBLE_OPENING_WIDTH) ||
-    Object.prototype.hasOwnProperty.call(normalizedInputs.values, DimensionField.VISIBLE_OPENING_HEIGHT);
+  const hasVisibleOpeningWidthRequest = Object.prototype.hasOwnProperty.call(
+    normalizedInputs.values,
+    DimensionField.VISIBLE_OPENING_WIDTH
+  );
+  const hasVisibleOpeningHeightRequest = Object.prototype.hasOwnProperty.call(
+    normalizedInputs.values,
+    DimensionField.VISIBLE_OPENING_HEIGHT
+  );
 
   for (const [field, normalizedInput] of Object.entries(normalizedInputs.values)) {
     if (!isDimensionFieldAllowed({ doorType: profile.key, viewSide, field })) {
@@ -343,7 +349,11 @@ function buildDimensionRules({ doorType, viewSide, inputs, doorStructure } = {})
     const boundary = buildLineBoundary({
       field,
       doorStructure,
-      hasVisibleOpeningRequest
+      hasSameAxisVisibleOpeningRequest: field === DimensionField.OPENING_WIDTH
+        ? hasVisibleOpeningWidthRequest
+        : field === DimensionField.OPENING_HEIGHT
+          ? hasVisibleOpeningHeightRequest
+          : false
     });
     if (boundary.issue) {
       issues.push(boundary.issue);
