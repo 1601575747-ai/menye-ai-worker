@@ -861,10 +861,10 @@ function getJpegSize(buffer) {
 function getImageSize(buffer, fileID) {
   const extension = getFileExtensionFromPath(fileID, 'png');
   if (extension === 'png') {
-    return getPngSize(buffer);
+    return getPngSize(buffer) || getJpegSize(buffer);
   }
   if (extension === 'jpg' || extension === 'jpeg') {
-    return getJpegSize(buffer);
+    return getJpegSize(buffer) || getPngSize(buffer);
   }
   return getPngSize(buffer) || getJpegSize(buffer);
 }
