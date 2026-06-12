@@ -285,7 +285,32 @@ assert.strictEqual(openingWidthOnly.rules[0].label, DimensionFieldMeta.openingWi
 assert.strictEqual(openingWidthOnly.rules[0].unit, 'mm');
 assert.strictEqual(openingWidthOnly.rules[0].type, 'line');
 assert.strictEqual(openingWidthOnly.rules[0].orientation, 'horizontal');
-assert.strictEqual(openingWidthOnly.rules[0].sourceBoundary.box, 'opening');
+assert.strictEqual(openingWidthOnly.rules[0].sourceBoundary.box, 'visibleOpening');
+assert.strictEqual(openingWidthOnly.rules[0].sourceBoundary.boundaryMode, 'doorTrimConnection');
+assert.strictEqual(openingWidthOnly.rules[0].sourceBoundary.from.value, mockDoorStructure.boxes.visibleOpening.left);
+assert.strictEqual(openingWidthOnly.rules[0].sourceBoundary.to.value, mockDoorStructure.boxes.visibleOpening.right);
+
+const openingWithVisibleWidth = buildDimensionRules({
+  doorType: '单开门',
+  viewSide: 'front',
+  inputs: {
+    openingWidth: '900',
+    visibleOpeningWidth: '800'
+  },
+  doorStructure: mockDoorStructure
+});
+const openingWithVisibleOpeningRule = openingWithVisibleWidth.rules.find((rule) => rule.field === 'openingWidth');
+const openingWithVisibleVisibleRule = openingWithVisibleWidth.rules.find((rule) => rule.field === 'visibleOpeningWidth');
+assert(openingWithVisibleOpeningRule);
+assert(openingWithVisibleVisibleRule);
+assert.strictEqual(openingWithVisibleOpeningRule.sourceBoundary.box, 'openingEdgeTrimMidline');
+assert.strictEqual(openingWithVisibleOpeningRule.sourceBoundary.boundaryMode, 'edgeTrimMidline');
+assert.deepStrictEqual(openingWithVisibleOpeningRule.sourceBoundary.sourceBoxes, ['outerTrim', 'visibleOpening']);
+assert.strictEqual(openingWithVisibleOpeningRule.sourceBoundary.from.value, 120);
+assert.strictEqual(openingWithVisibleOpeningRule.sourceBoundary.to.value, 880);
+assert.strictEqual(openingWithVisibleVisibleRule.sourceBoundary.box, 'visibleOpening');
+assert.strictEqual(openingWithVisibleVisibleRule.sourceBoundary.from.value, 160);
+assert.strictEqual(openingWithVisibleVisibleRule.sourceBoundary.to.value, 840);
 
 const wallOnly = buildDimensionRules({
   doorType: 'single',
@@ -361,7 +386,8 @@ const missingBoundary = buildDimensionRules({
     ...mockDoorStructure,
     boxes: {
       ...mockDoorStructure.boxes,
-      opening: null
+      opening: null,
+      visibleOpening: null
     }
   }
 });
@@ -676,8 +702,17 @@ for (const annotation of wallPlan.textOnlyAnnotations) {
   assert(annotation.text.includes('mm'), `text-only annotation missing mm: ${annotation.text}`);
 }
 
-assert(twoWidthPlan.debug.boundaries.some((boundary) => boundary.box === 'opening'));
-assert(twoWidthPlan.debug.boundaries.some((boundary) => boundary.box === 'visibleOpening'));
+assert(twoWidthPlan.debug.boundaries.some((boundary) => (
+  boundary.box === 'openingEdgeTrimMidline' &&
+  boundary.boundaryMode === 'edgeTrimMidline' &&
+  boundary.from.value === 120 &&
+  boundary.to.value === 880
+)));
+assert(twoWidthPlan.debug.boundaries.some((boundary) => (
+  boundary.box === 'visibleOpening' &&
+  boundary.from.value === 160 &&
+  boundary.to.value === 840
+)));
 assert(!twoWidthPlan.debug.boundaries.some((boundary) => boundary.box === 'shadowRegions'));
 assert.strictEqual(twoWidthPlan.debug.shadowRegionsIgnored, true);
 

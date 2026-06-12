@@ -43,6 +43,10 @@ function hasNumber(value) {
 }
 
 function getBoxForRule(rule, doorStructure) {
+  const boundaryBox = rule && rule.sourceBoundary && rule.sourceBoundary.boxRect;
+  if (boundaryBox) {
+    return boundaryBox;
+  }
   const boxKey = rule && rule.sourceBoundary && rule.sourceBoundary.box;
   return boxKey && doorStructure && doorStructure.boxes ? doorStructure.boxes[boxKey] : null;
 }
@@ -361,6 +365,8 @@ function buildDimensionRenderPlan({ rules, doorStructure, imageSize } = {}) {
       usedBoundaries.push(Object.freeze({
         field: rule.field,
         box: rule.sourceBoundary.box,
+        sourceBoxes: rule.sourceBoundary.sourceBoxes || Object.freeze([rule.sourceBoundary.box]),
+        boundaryMode: rule.sourceBoundary.boundaryMode || null,
         orientation: rule.orientation,
         from: rule.sourceBoundary.from,
         to: rule.sourceBoundary.to

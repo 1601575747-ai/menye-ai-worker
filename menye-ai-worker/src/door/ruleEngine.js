@@ -119,7 +119,96 @@ function getVerticalBottom({ field, box, doorStructure, heightBottomMode }) {
   return box.bottom;
 }
 
-function buildLineBoundary({ field, doorStructure }) {
+function cloneBox(box) {
+  if (!box) {
+    return null;
+  }
+  return Object.freeze({
+    left: box.left,
+    top: box.top,
+    right: box.right,
+    bottom: box.bottom
+  });
+}
+
+function makeOpeningEdgeTrimMidlineBox(doorStructure) {
+  const outerTrim = getBox(doorStructure, 'outerTrim');
+  const visibleOpening = getBox(doorStructure, 'visibleOpening');
+  if (!outerTrim || !visibleOpening) {
+    return null;
+  }
+  const requiredValues = [
+    outerTrim.left,
+    outerTrim.top,
+    outerTrim.right,
+    outerTrim.bottom,
+    visibleOpening.left,
+    visibleOpening.top,
+    visibleOpening.right,
+    visibleOpening.bottom
+  ];
+  if (!requiredValues.every(hasNumber)) {
+    return null;
+  }
+  return Object.freeze({
+    left: (outerTrim.left + visibleOpening.left) / 2,
+    top: (outerTrim.top + visibleOpening.top) / 2,
+    right: (outerTrim.right + visibleOpening.right) / 2,
+    bottom: visibleOpening.bottom
+  });
+}
+
+function getOpeningBoundaryBox({ field, doorStructure, hasVisibleOpeningRequest }) {
+  if (field !== DimensionField.OPENING_WIDTH && field !== DimensionField.OPENING_HEIGHT) {
+    const boundaryConfig = FIELD_BOUNDARY_MAP[field];
+    const primaryBox = boundaryConfig ? getBox(doorStructure, boundaryConfig.boxKey) : null;
+    return {
+      box: primaryBox,
+      sourceBoxKey: boundaryConfig ? boundaryConfig.boxKey : '',
+      sourceBoxes: boundaryConfig ? [boundaryConfig.boxKey] : [],
+      boundaryMode: 'profileBox'
+    };
+  }
+
+  if (hasVisibleOpeningRequest) {
+    const midlineBox = makeOpeningEdgeTrimMidlineBox(doorStructure);
+    if (midlineBox) {
+      return {
+        box: midlineBox,
+        sourceBoxKey: 'openingEdgeTrimMidline',
+        sourceBoxes: ['outerTrim', 'visibleOpening'],
+        boundaryMode: 'edgeTrimMidline'
+      };
+    }
+    const openingBox = getBox(doorStructure, 'opening');
+    return {
+      box: openingBox,
+      sourceBoxKey: 'opening',
+      sourceBoxes: ['opening'],
+      boundaryMode: 'edgeTrimMidlineFallback'
+    };
+  }
+
+  const connectionBox = getBox(doorStructure, 'visibleOpening');
+  if (connectionBox) {
+    return {
+      box: connectionBox,
+      sourceBoxKey: 'visibleOpening',
+      sourceBoxes: ['visibleOpening'],
+      boundaryMode: 'doorTrimConnection'
+    };
+  }
+
+  const openingBox = getBox(doorStructure, 'opening');
+  return {
+    box: openingBox,
+    sourceBoxKey: 'opening',
+    sourceBoxes: ['opening'],
+    boundaryMode: 'doorTrimConnectionFallback'
+  };
+}
+
+function buildLineBoundary({ field, doorStructure, hasVisibleOpeningRequest }) {
   const boundaryConfig = FIELD_BOUNDARY_MAP[field];
   if (!boundaryConfig) {
     return {
@@ -128,11 +217,20 @@ function buildLineBoundary({ field, doorStructure }) {
   }
 
   const boxKey = boundaryConfig.boxKey;
-  let box = getBox(doorStructure, boxKey);
-  let sourceBoxKey = boxKey;
+  const openingBoundary = getOpeningBoundaryBox({
+    field,
+    doorStructure,
+    hasVisibleOpeningRequest
+  });
+  let box = openingBoundary.box;
+  let sourceBoxKey = openingBoundary.sourceBoxKey || boxKey;
+  let sourceBoxes = openingBoundary.sourceBoxes || [sourceBoxKey];
+  let boundaryMode = openingBoundary.boundaryMode || 'profileBox';
   if (!box && boundaryConfig.fallbackBoxKey) {
     box = getBox(doorStructure, boundaryConfig.fallbackBoxKey);
     sourceBoxKey = boundaryConfig.fallbackBoxKey;
+    sourceBoxes = [sourceBoxKey];
+    boundaryMode = 'fallbackBox';
   }
   if (!box) {
     return {
@@ -157,6 +255,9 @@ function buildLineBoundary({ field, doorStructure }) {
     return {
       sourceBoundary: Object.freeze({
         box: sourceBoxKey,
+        boxRect: cloneBox(box),
+        sourceBoxes: Object.freeze(sourceBoxes),
+        boundaryMode,
         from: Object.freeze({ key: 'left', value: box.left }),
         to: Object.freeze({ key: 'right', value: box.right })
       }),
@@ -164,7 +265,8 @@ function buildLineBoundary({ field, doorStructure }) {
       constraints: Object.freeze({
         ignoreShadowRegions: true,
         shadowRegionsExcluded: Array.isArray(doorStructure && doorStructure.boxes && doorStructure.boxes.shadowRegions),
-        heightBottomMode
+        heightBottomMode,
+        openingBoundaryMode: field === DimensionField.OPENING_WIDTH ? boundaryMode : null
       })
     };
   }
@@ -187,6 +289,9 @@ function buildLineBoundary({ field, doorStructure }) {
   return {
     sourceBoundary: Object.freeze({
       box: sourceBoxKey,
+      boxRect: cloneBox(box),
+      sourceBoxes: Object.freeze(sourceBoxes),
+      boundaryMode,
       from: Object.freeze({ key: 'top', value: top }),
       to: Object.freeze({
         key: heightBottomMode === 'shared' ? 'doorBottomY' : 'bottom',
@@ -198,7 +303,8 @@ function buildLineBoundary({ field, doorStructure }) {
       ignoreShadowRegions: true,
       shadowRegionsExcluded: Array.isArray(doorStructure && doorStructure.boxes && doorStructure.boxes.shadowRegions),
       heightBottomMode,
-      sharedBottomY: heightBottomMode === 'shared' ? bottom : null
+      sharedBottomY: heightBottomMode === 'shared' ? bottom : null,
+      openingBoundaryMode: field === DimensionField.OPENING_HEIGHT ? boundaryMode : null
     })
   };
 }
@@ -211,6 +317,8 @@ function buildDimensionRules({ doorType, viewSide, inputs, doorStructure } = {})
   });
   const issues = normalizedInputs.errors.slice();
   const rules = [];
+  const hasVisibleOpeningRequest = Object.prototype.hasOwnProperty.call(normalizedInputs.values, DimensionField.VISIBLE_OPENING_WIDTH) ||
+    Object.prototype.hasOwnProperty.call(normalizedInputs.values, DimensionField.VISIBLE_OPENING_HEIGHT);
 
   for (const [field, normalizedInput] of Object.entries(normalizedInputs.values)) {
     if (!isDimensionFieldAllowed({ doorType: profile.key, viewSide, field })) {
@@ -226,7 +334,11 @@ function buildDimensionRules({ doorType, viewSide, inputs, doorStructure } = {})
       continue;
     }
 
-    const boundary = buildLineBoundary({ field, doorStructure });
+    const boundary = buildLineBoundary({
+      field,
+      doorStructure,
+      hasVisibleOpeningRequest
+    });
     if (boundary.issue) {
       issues.push(boundary.issue);
       continue;
