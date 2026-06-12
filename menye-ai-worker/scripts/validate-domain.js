@@ -51,6 +51,7 @@ const {
   normalizeTaskType,
   shouldUseDirectBackgroundComposite,
   inferLockMaskBox,
+  getReferenceStylePrompt,
   normalizeDimensionBoxes,
   getImageModelCandidatesForInput,
   shouldUseGlobalEditForHandleReference
@@ -501,6 +502,44 @@ assert(backgroundLockColorPrompt.includes('最终结果应等于：输入图1背
 assert(backgroundLockColorPrompt.includes('锁体/智能锁：必须'));
 assert(backgroundLockColorPrompt.includes('结构化需求确认：客户上传了锁体/智能锁细节图'));
 assert(backgroundLockColorPrompt.includes('结构化需求确认：客户上传了颜色参考图'));
+assert(backgroundLockColorPrompt.includes('锁体/智能锁按 lock-detail 参考图执行替换/融合'));
+assert(backgroundLockColorPrompt.includes('不能因为背景、颜色、白底、把手或其他局部任务而跳过智能锁'));
+assert(backgroundLockColorPrompt.includes('只贴门不换锁'));
+assert(backgroundLockColorPrompt.includes('智能锁验收标准'));
+assert(!backgroundLockColorPrompt.includes('也是唯一门体/门型/门色/五金来源'));
+
+const backgroundLockOnlyPrompt = buildDoorImageInstruction({
+  taskType: 'scene-effect',
+  templateType: '场景效果图',
+  doorType: '双开门',
+  targetParts: ['background', 'lock'],
+  requirement: '背景按参考图，智能锁换成参考图',
+  referenceImages: [
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' },
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'lock-detail', originalImageFileID: 'cloud://mock/lock.png' }
+  ]
+}, {
+  source: 'background-doorway-test',
+  left: 120,
+  top: 80,
+  right: 860,
+  bottom: 980
+}, null, [
+  { slotId: 'background-reference', label: '背景', applyDescription: '以背景门位为最终画布' },
+  { slotId: 'lock-detail', label: '锁体/智能锁', lockIntegrationType: 'standalone', hasSmartLockPanel: true, hasRoundHole: true, applyDescription: '替换智能锁面板' }
+], null);
+assert(backgroundLockOnlyPrompt.includes('锁体/智能锁按 lock-detail 参考图执行替换/融合'));
+assert(backgroundLockOnlyPrompt.includes('成图中锁体/智能锁安装区必须有清晰可见的新锁具核心特征'));
+assert(backgroundLockOnlyPrompt.includes('背景已替换、颜色已改变或包边/把手已处理，但智能锁仍是原图旧锁'));
+assert(!backgroundLockOnlyPrompt.includes('必须保留第一张图的门型、颜色、包边、把手、锁体、玻璃和材质'));
+
+const backgroundStylePromptWithLock = getReferenceStylePrompt('background-reference', {
+  hasLockDetail: true
+});
+assert(backgroundStylePromptWithLock.includes('锁体/智能锁由 lock-detail 参考图执行替换'));
+assert(backgroundStylePromptWithLock.includes('不能在背景任务里要求保留原锁不变'));
+assert(!backgroundStylePromptWithLock.includes('保持第一张整门图的门体、包边、把手、锁体、玻璃'));
 
 const backgroundEdgeColorJob = {
   taskType: 'scene-effect',
