@@ -83,6 +83,51 @@ function normalizeShadowRegions(value) {
   return Object.freeze(value.map(normalizeBox).filter(Boolean));
 }
 
+function normalizeDimensionAnchors(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  return Object.freeze({
+    doorTrimConnection: normalizeBox(source.doorTrimConnection),
+    openingMidline: normalizeBox(source.openingMidline)
+  });
+}
+
+function hasBoxNumbers(box) {
+  return !!box &&
+    Number.isFinite(box.left) &&
+    Number.isFinite(box.top) &&
+    Number.isFinite(box.right) &&
+    Number.isFinite(box.bottom) &&
+    box.right > box.left &&
+    box.bottom > box.top;
+}
+
+function inferOpeningMidlineAnchor(boxes = {}) {
+  const outerTrim = boxes.outerTrim;
+  const opening = boxes.opening;
+  const visibleOpening = boxes.visibleOpening;
+  if (!hasBoxNumbers(outerTrim) || !hasBoxNumbers(visibleOpening)) {
+    return null;
+  }
+  const outerHeight = outerTrim.bottom - outerTrim.top;
+  const openingTop = hasBoxNumbers(opening) ? opening.top : null;
+  const openingTopGap = openingTop !== null ? openingTop - outerTrim.top : 0;
+  const hasDistinctHeaderOrTransom = openingTop !== null && openingTopGap > Math.max(24, outerHeight * 0.12);
+  const verticalOuterTop = hasDistinctHeaderOrTransom ? openingTop : outerTrim.top;
+  return normalizeBox({
+    left: (outerTrim.left + visibleOpening.left) / 2,
+    top: (verticalOuterTop + visibleOpening.top) / 2,
+    right: (outerTrim.right + visibleOpening.right) / 2,
+    bottom: visibleOpening.bottom
+  });
+}
+
+function inferDimensionAnchorsFromBoxes(boxes = {}) {
+  return Object.freeze({
+    doorTrimConnection: hasBoxNumbers(boxes.visibleOpening) ? normalizeBox(boxes.visibleOpening) : null,
+    openingMidline: inferOpeningMidlineAnchor(boxes)
+  });
+}
+
 function makeEmptyBoxes() {
   return {
     outerTrim: null,
@@ -118,6 +163,7 @@ function normalizeDoorStructure(raw, context = {}) {
     boxes[key] = normalizeBox(sourceBoxes[key]);
   }
   boxes.shadowRegions = normalizeShadowRegions(sourceBoxes.shadowRegions);
+  const dimensionAnchors = normalizeDimensionAnchors(source.dimensionAnchors);
 
   const rawDoorBottomY = source.keypoints && source.keypoints.doorBottomY;
   const hasDoorBottomY = rawDoorBottomY !== null && rawDoorBottomY !== undefined && rawDoorBottomY !== '';
@@ -130,6 +176,7 @@ function normalizeDoorStructure(raw, context = {}) {
     doorType: normalizeDoorType(source.doorType || context.doorType),
     viewSide: normalizeViewSide(source.viewSide || context.viewSide),
     boxes: Object.freeze(boxes),
+    dimensionAnchors,
     keypoints: Object.freeze({
       doorBottomY: normalizedDoorBottomY
     }),
@@ -349,6 +396,8 @@ function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context 
   nextBoxes.transom = aiBoxes.transom || heuristicBoxes.transom || null;
   nextBoxes.header = aiBoxes.header || heuristicBoxes.header || nextBoxes.outerTrim;
   nextBoxes.shadowRegions = Array.isArray(aiBoxes.shadowRegions) ? aiBoxes.shadowRegions : [];
+  const heuristicAnchors = heuristicStructure.dimensionAnchors || inferDimensionAnchorsFromBoxes(heuristicBoxes);
+  const aiAnchors = aiStructure.dimensionAnchors || Object.freeze({});
 
   if (nextBoxes.header && nextBoxes.outerTrim && boxWidth(nextBoxes.header) < boxWidth(nextBoxes.outerTrim) * 0.88) {
     nextBoxes.header = heuristicBoxes.header || nextBoxes.outerTrim;
@@ -375,11 +424,24 @@ function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context 
   if (restoreSharedHeightMode) {
     notes.push('heightBottomMode restored to shared from heuristic guard');
   }
+  const useHeuristicAnchors = outerTooSmall ||
+    openingTooNarrow ||
+    visibleTooNarrow ||
+    openingSuspiciousY ||
+    visibleSuspiciousY;
+  const inferredNextAnchors = inferDimensionAnchorsFromBoxes(nextBoxes);
+  const nextDimensionAnchors = useHeuristicAnchors
+    ? heuristicAnchors
+    : Object.freeze({
+      doorTrimConnection: aiAnchors.doorTrimConnection || inferredNextAnchors.doorTrimConnection,
+      openingMidline: aiAnchors.openingMidline || inferredNextAnchors.openingMidline
+    });
 
   return normalizeDoorStructure({
     doorType: aiStructure.doorType,
     viewSide: aiStructure.viewSide,
     boxes: nextBoxes,
+    dimensionAnchors: nextDimensionAnchors,
     keypoints: {
       doorBottomY: useHeuristicBottom ? heuristicBottom : aiBottom
     },
@@ -438,6 +500,10 @@ function mockAnalyzer({ doorType, viewSide } = {}) {
       shadowRegions: [
         { left: 70, top: 960, right: 930, bottom: 990 }
       ]
+    },
+    dimensionAnchors: {
+      doorTrimConnection: { left: 160, top: 150, right: 840, bottom: 940 },
+      openingMidline: { left: 120, top: 110, right: 880, bottom: 940 }
     },
     keypoints: {
       doorBottomY: 950
@@ -1255,11 +1321,13 @@ async function heuristicAnalyzer({ image, imageSize, doorType, viewSide } = {}) 
         bottom: vertical.bottom
       }, scaleX, scaleY, sourceSize.width, sourceSize.height), sourceSize, doorType);
     const outerTrim = boxes.outerTrim;
+    const dimensionAnchors = inferDimensionAnchorsFromBoxes(boxes);
 
     return normalizeDoorStructure({
       doorType,
       viewSide,
       boxes,
+      dimensionAnchors,
       keypoints: {
         doorBottomY: outerTrim.bottom
       },

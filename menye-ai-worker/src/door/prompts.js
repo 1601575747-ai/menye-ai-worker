@@ -19,13 +19,13 @@ function buildDimensionPositioningHints(dimensionInputs) {
     `客户本次填写的尺寸字段 key：${requestedKeys.join(', ')}。`,
     '你仍然只做结构定位，不画尺寸线；后续程序会根据这些结构边界确定性绘制。',
     hasOpening && !hasVisibleOpening
-      ? '本次只有门洞尺寸时，后续程序会把门洞尺寸贴到门和包边之间的连接硬边；因此 visibleOpening 必须准确表示这条连接硬边。'
+      ? '本次只有门洞尺寸时，后续程序会把门洞尺寸贴到门和包边之间的连接硬边；因此 visibleOpening 和 dimensionAnchors.doorTrimConnection 必须准确表示这条连接硬边。'
       : '',
     hasOpening && hasVisibleOpening
-      ? '本次门洞尺寸和见光尺寸同时填写时，visibleOpening 必须准确表示门和包边之间的连接硬边；后续程序会用 outerTrim 与 visibleOpening 自动计算门洞尺寸的半包边/包边厚度中线位置。'
+      ? '本次门洞尺寸和见光尺寸同时填写时，visibleOpening 必须准确表示门和包边之间的连接硬边；dimensionAnchors.openingMidline 必须尽量给出包边厚度中线/半包边位置，后续程序会先校验再使用。'
       : '',
     !hasOpening && hasVisibleOpening
-      ? '本次只有见光尺寸时，visibleOpening 必须准确表示不包含门洞外扩部分的净可见开口边界。'
+      ? '本次只有见光尺寸时，visibleOpening 和 dimensionAnchors.doorTrimConnection 必须准确表示不包含门洞外扩部分的净可见开口边界。'
       : '',
     '不要把门板内部横纹、玻璃分隔线、中缝、把手、锁体、阴影或装饰线误判为 opening/visibleOpening 的左右或上边界。'
   ].filter(Boolean).join('\n');
@@ -46,8 +46,12 @@ function buildDoorStructurePrompt({ doorType, viewSide, taskType, dimensionInput
     'doorBottomY 必须输出；无法判断时填 null，并设置 needsUserAdjustment=true。',
     'heightBottomMode 默认 shared。只有存在下槛、台阶、门洞落差或额外底部结构时才输出 separate。',
     '低置信度字段必须在 confidence 中标 low，不得胡乱补 high。',
-    'JSON 字段固定为：doorType, viewSide, boxes, keypoints, modes, confidence, needsUserAdjustment, notes。',
+    'JSON 字段固定为：doorType, viewSide, boxes, dimensionAnchors, keypoints, modes, confidence, needsUserAdjustment, notes。',
     'boxes 固定包含：outerTrim, opening, visibleOpening, doorLeaf, handle, lock, transom, header, shadowRegions。',
+    'dimensionAnchors 固定包含：doorTrimConnection, openingMidline。',
+    'dimensionAnchors.doorTrimConnection 是门和包边之间的连接硬边矩形；只有门洞尺寸时门洞取这条边，同时有见光尺寸时见光取这条边。',
+    'dimensionAnchors.openingMidline 是包边厚度中线/半包边位置矩形；只有同时存在门洞尺寸和见光尺寸时门洞取这条边。',
+    'dimensionAnchors 的坐标必须来自实体硬边或实体厚度中线推断，不得取阴影、地面投影、背景灰边或门板内部装饰线。',
     'keypoints 固定包含：doorBottomY。modes 固定包含：heightBottomMode。',
     'box 格式固定为 {"left":number,"top":number,"right":number,"bottom":number} 或 null。'
   ].join('\n');
@@ -76,6 +80,8 @@ function buildDoorStructureRefinementPrompt({ doorType, viewSide, taskType, imag
     '- outerTrim：含包边、门头、门柱、外框装饰在内的整体门体最外硬边；不要包含阴影、背景灰边、墙面、地面投影。',
     '- opening：门洞/门框结构边界。对于带门头、气窗或上横梁的门，opening.top 应落在门洞开始处的横向硬边，不要落在最上方拱头或背景上沿；如果无法稳定判断半包边位置，可先贴近门洞结构硬边。',
     '- visibleOpening：见光尺寸边界，也就是门和包边之间的连接硬边；visibleOpening.top 应落在门与上包边连接处或门扇可见区域上沿。',
+    '- dimensionAnchors.doorTrimConnection：与 visibleOpening 的取线含义一致，必须贴门和包边之间的真实连接硬边；如果 visibleOpening 被门板纹理或装饰线干扰，用这个锚点给出更可靠的取线框。',
+    '- dimensionAnchors.openingMidline：半包边/包边厚度中线位置。左右边界应在 outerTrim 外沿与 doorTrimConnection/visibleOpening 连接硬边之间；上边界应在上包边外沿或 opening.top 与 visibleOpening.top 之间；不得落到门板内部横纹、玻璃边、阴影或背景灰边。',
     '- opening.left/right 必须取整个门洞左右硬边，不得取中缝、门扇分缝、玻璃竖线、装饰线、把手、锁体或局部门板线条。',
     '- visibleOpening.left/right 必须取整组可见开口的左右边界，不得只圈单个门扇、单个玻璃窗、单侧装饰区域或中间窄区域。',
     '- 双开门、子母门、四开门、六开门的 opening/visibleOpening 应跨完整门组；除非图片中真实门洞就是窄单扇，否则宽度不能被中间竖向装饰边缘截断。',

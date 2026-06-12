@@ -131,6 +131,89 @@ function cloneBox(box) {
   });
 }
 
+function getDimensionAnchor(doorStructure, key) {
+  const anchors = doorStructure && doorStructure.dimensionAnchors ? doorStructure.dimensionAnchors : {};
+  const box = anchors[key];
+  if (!box ||
+      !hasNumber(box.left) ||
+      !hasNumber(box.top) ||
+      !hasNumber(box.right) ||
+      !hasNumber(box.bottom) ||
+      box.right <= box.left ||
+      box.bottom <= box.top) {
+    return null;
+  }
+  return box;
+}
+
+function isBoxInside(outer, inner, tolerance) {
+  if (!outer || !inner) {
+    return true;
+  }
+  return inner.left >= outer.left - tolerance &&
+    inner.top >= outer.top - tolerance &&
+    inner.right <= outer.right + tolerance &&
+    inner.bottom <= outer.bottom + tolerance;
+}
+
+function getBoundaryTolerance(doorStructure) {
+  const outerTrim = getBox(doorStructure, 'outerTrim');
+  if (!outerTrim || !hasNumber(outerTrim.left) || !hasNumber(outerTrim.right)) {
+    return 8;
+  }
+  return Math.max(6, (outerTrim.right - outerTrim.left) * 0.035);
+}
+
+function isReasonableDoorTrimConnectionAnchor(anchor, doorStructure) {
+  if (!anchor) {
+    return false;
+  }
+  const outerTrim = getBox(doorStructure, 'outerTrim');
+  const tolerance = getBoundaryTolerance(doorStructure);
+  if (!isBoxInside(outerTrim, anchor, tolerance)) {
+    return false;
+  }
+  if (outerTrim && hasNumber(outerTrim.left) && hasNumber(outerTrim.right)) {
+    const outerWidth = outerTrim.right - outerTrim.left;
+    const anchorWidth = anchor.right - anchor.left;
+    if (anchorWidth < outerWidth * 0.32) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isReasonableOpeningMidlineAnchor(anchor, doorStructure) {
+  if (!anchor) {
+    return false;
+  }
+  const outerTrim = getBox(doorStructure, 'outerTrim');
+  const opening = getBox(doorStructure, 'opening');
+  const visibleOpening = getBox(doorStructure, 'visibleOpening');
+  const tolerance = getBoundaryTolerance(doorStructure);
+  if (!isBoxInside(outerTrim, anchor, tolerance)) {
+    return false;
+  }
+  if (outerTrim && visibleOpening) {
+    const outerWidth = outerTrim.right - outerTrim.left;
+    const visibleWidth = visibleOpening.right - visibleOpening.left;
+    const anchorWidth = anchor.right - anchor.left;
+    const topFloor = opening && hasNumber(opening.top) &&
+      opening.top - outerTrim.top > Math.max(24, (outerTrim.bottom - outerTrim.top) * 0.12)
+      ? opening.top
+      : outerTrim.top;
+    return anchor.left >= outerTrim.left - tolerance &&
+      anchor.left <= visibleOpening.left + tolerance &&
+      anchor.right <= outerTrim.right + tolerance &&
+      anchor.right >= visibleOpening.right - tolerance &&
+      anchor.top >= topFloor - tolerance &&
+      anchor.top <= visibleOpening.top + tolerance &&
+      anchorWidth >= visibleWidth * 0.92 &&
+      anchorWidth <= outerWidth * 1.04;
+  }
+  return true;
+}
+
 function makeOpeningEdgeTrimMidlineBox(doorStructure) {
   const outerTrim = getBox(doorStructure, 'outerTrim');
   const opening = getBox(doorStructure, 'opening');
@@ -177,6 +260,16 @@ function getOpeningBoundaryBox({ field, doorStructure, hasVisibleOpeningRequest 
   }
 
   if (hasVisibleOpeningRequest) {
+    const explicitMidline = getDimensionAnchor(doorStructure, 'openingMidline');
+    if (isReasonableOpeningMidlineAnchor(explicitMidline, doorStructure)) {
+      return {
+        box: explicitMidline,
+        sourceBoxKey: 'openingEdgeTrimMidline',
+        sourceBoxes: ['dimensionAnchors.openingMidline', 'outerTrim', 'visibleOpening'],
+        boundaryMode: 'edgeTrimMidline',
+        anchorSource: 'dimensionAnchors.openingMidline'
+      };
+    }
     const midlineBox = makeOpeningEdgeTrimMidlineBox(doorStructure);
     if (midlineBox) {
       return {
@@ -195,6 +288,16 @@ function getOpeningBoundaryBox({ field, doorStructure, hasVisibleOpeningRequest 
     };
   }
 
+  const explicitConnection = getDimensionAnchor(doorStructure, 'doorTrimConnection');
+  if (isReasonableDoorTrimConnectionAnchor(explicitConnection, doorStructure)) {
+    return {
+      box: explicitConnection,
+      sourceBoxKey: 'doorTrimConnection',
+      sourceBoxes: ['dimensionAnchors.doorTrimConnection'],
+      boundaryMode: 'doorTrimConnection',
+      anchorSource: 'dimensionAnchors.doorTrimConnection'
+    };
+  }
   const connectionBox = getBox(doorStructure, 'visibleOpening');
   if (connectionBox) {
     return {
@@ -264,6 +367,7 @@ function buildLineBoundary({ field, doorStructure, hasVisibleOpeningRequest }) {
         boxRect: cloneBox(box),
         sourceBoxes: Object.freeze(sourceBoxes),
         boundaryMode,
+        anchorSource: openingBoundary.anchorSource || null,
         from: Object.freeze({ key: 'left', value: box.left }),
         to: Object.freeze({ key: 'right', value: box.right })
       }),
@@ -298,6 +402,7 @@ function buildLineBoundary({ field, doorStructure, hasVisibleOpeningRequest }) {
       boxRect: cloneBox(box),
       sourceBoxes: Object.freeze(sourceBoxes),
       boundaryMode,
+      anchorSource: openingBoundary.anchorSource || null,
       from: Object.freeze({ key: 'top', value: top }),
       to: Object.freeze({
         key: heightBottomMode === 'shared' ? 'doorBottomY' : 'bottom',

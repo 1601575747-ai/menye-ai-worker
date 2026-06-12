@@ -66,6 +66,10 @@ const DoorStructureShape = Object.freeze({
     header: null,
     shadowRegions: []
   }),
+  dimensionAnchors: Object.freeze({
+    doorTrimConnection: null,
+    openingMidline: null
+  }),
   keypoints: Object.freeze({
     doorBottomY: null
   }),

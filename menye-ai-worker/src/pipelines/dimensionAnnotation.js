@@ -92,6 +92,14 @@ function summarizeDoorStructure(doorStructure) {
       header: summarizeBox(boxes.header),
       shadowRegions: Object.freeze(Array.isArray(boxes.shadowRegions) ? boxes.shadowRegions.map(summarizeBox).filter(Boolean) : [])
     }),
+    dimensionAnchors: Object.freeze({
+      doorTrimConnection: summarizeBox(doorStructure && doorStructure.dimensionAnchors
+        ? doorStructure.dimensionAnchors.doorTrimConnection
+        : null),
+      openingMidline: summarizeBox(doorStructure && doorStructure.dimensionAnchors
+        ? doorStructure.dimensionAnchors.openingMidline
+        : null)
+    }),
     keypoints: Object.freeze({
       doorBottomY: doorStructure && doorStructure.keypoints ? doorStructure.keypoints.doorBottomY : null
     }),

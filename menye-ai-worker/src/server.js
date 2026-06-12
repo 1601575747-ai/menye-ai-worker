@@ -2283,15 +2283,93 @@ function getMidpointBoundaryCoordinate(outerValue, innerValue) {
   return (Number(outerValue) + Number(innerValue)) / 2;
 }
 
+function isDimensionBoxInside(outerBox, innerBox, tolerance = 8) {
+  if (!hasDimensionBoxNumbers(outerBox) || !hasDimensionBoxNumbers(innerBox)) {
+    return true;
+  }
+  return innerBox.left >= outerBox.left - tolerance &&
+    innerBox.top >= outerBox.top - tolerance &&
+    innerBox.right <= outerBox.right + tolerance &&
+    innerBox.bottom <= outerBox.bottom + tolerance;
+}
+
+function getDimensionBoundaryTolerance(boxes) {
+  const outerTrim = boxes && boxes.outerTrimBox;
+  if (!hasDimensionBoxNumbers(outerTrim)) {
+    return 8;
+  }
+  return Math.max(6, (outerTrim.right - outerTrim.left) * 0.035);
+}
+
+function isReasonableDoorTrimConnectionBox(candidate, boxes) {
+  if (!hasDimensionBoxNumbers(candidate)) {
+    return false;
+  }
+  const outerTrim = boxes && boxes.outerTrimBox;
+  const tolerance = getDimensionBoundaryTolerance(boxes);
+  if (!isDimensionBoxInside(outerTrim, candidate, tolerance)) {
+    return false;
+  }
+  if (hasDimensionBoxNumbers(outerTrim)) {
+    const outerWidth = outerTrim.right - outerTrim.left;
+    const candidateWidth = candidate.right - candidate.left;
+    if (candidateWidth < outerWidth * 0.32) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isReasonableOpeningMidlineBox(candidate, boxes) {
+  if (!hasDimensionBoxNumbers(candidate)) {
+    return false;
+  }
+  const outerTrim = boxes && boxes.outerTrimBox;
+  const visibleOpening = boxes && boxes.visibleOpeningBox;
+  const openingBox = boxes && boxes.openingMidlineBox;
+  const tolerance = getDimensionBoundaryTolerance(boxes);
+  if (!isDimensionBoxInside(outerTrim, candidate, tolerance)) {
+    return false;
+  }
+  if (!hasDimensionBoxNumbers(outerTrim) || !hasDimensionBoxNumbers(visibleOpening)) {
+    return true;
+  }
+  const outerWidth = outerTrim.right - outerTrim.left;
+  const visibleWidth = visibleOpening.right - visibleOpening.left;
+  const candidateWidth = candidate.right - candidate.left;
+  const outerHeight = outerTrim.bottom - outerTrim.top;
+  const topFloor = hasDimensionBoxNumbers(openingBox) &&
+    openingBox.top - outerTrim.top > Math.max(24, outerHeight * 0.12)
+    ? openingBox.top
+    : outerTrim.top;
+  return candidate.left >= outerTrim.left - tolerance &&
+    candidate.left <= visibleOpening.left + tolerance &&
+    candidate.right <= outerTrim.right + tolerance &&
+    candidate.right >= visibleOpening.right - tolerance &&
+    candidate.top >= topFloor - tolerance &&
+    candidate.top <= visibleOpening.top + tolerance &&
+    candidateWidth >= visibleWidth * 0.92 &&
+    candidateWidth <= outerWidth * 1.04;
+}
+
 function getRequestAwareOpeningMidlineBox(boxes, dimensionData, size) {
   if (!boxes || !dimensionData || !dimensionData.hasDoorOpeningRequest) {
     return boxes && boxes.openingMidlineBox ? boxes.openingMidlineBox : null;
   }
   if (!hasDimensionBoxNumbers(boxes.visibleOpeningBox)) {
+    if (!dimensionData.hasVisibleOpeningRequest && isReasonableDoorTrimConnectionBox(boxes.doorTrimConnectionBox, boxes)) {
+      return normalizeDimensionBox(boxes.doorTrimConnectionBox, size, 'dimension-opening-door-trim-connection-ai');
+    }
     return boxes.openingMidlineBox || null;
   }
   if (!dimensionData.hasVisibleOpeningRequest) {
+    if (isReasonableDoorTrimConnectionBox(boxes.doorTrimConnectionBox, boxes)) {
+      return normalizeDimensionBox(boxes.doorTrimConnectionBox, size, 'dimension-opening-door-trim-connection-ai');
+    }
     return normalizeDimensionBox(boxes.visibleOpeningBox, size, 'dimension-opening-door-trim-connection');
+  }
+  if (isReasonableOpeningMidlineBox(boxes.openingMidlineBox, boxes)) {
+    return normalizeDimensionBox(boxes.openingMidlineBox, size, 'dimension-opening-ai-midline');
   }
   if (!hasDimensionBoxNumbers(boxes.outerTrimBox)) {
     return boxes.openingMidlineBox || normalizeDimensionBox(boxes.visibleOpeningBox, size, 'dimension-opening-midline-fallback');
@@ -2336,6 +2414,7 @@ function normalizeDimensionBoxes(parsed, size, dimensionData) {
   }
   const result = {
     outerTrimBox: normalizeDimensionBox(parsed.outerTrimBox, size, 'dimension-outer-trim'),
+    doorTrimConnectionBox: normalizeDimensionBox(parsed.doorTrimConnectionBox, size, 'dimension-door-trim-connection'),
     openingMidlineBox: normalizeDimensionBox(parsed.openingMidlineBox, size, 'dimension-opening-midline'),
     visibleOpeningBox: normalizeDimensionBox(parsed.visibleOpeningBox, size, 'dimension-visible-opening'),
     headerOuterBox: normalizeDimensionBox(parsed.headerOuterBox, size, 'dimension-header-outer'),
@@ -2346,7 +2425,7 @@ function normalizeDimensionBoxes(parsed, size, dimensionData) {
     confidence: parsed.confidence || '',
     notes: parsed.notes || ''
   };
-  if (!result.outerTrimBox && !result.openingMidlineBox && !result.visibleOpeningBox && !result.headerOuterBox && result.doorBottomY === null) {
+  if (!result.outerTrimBox && !result.doorTrimConnectionBox && !result.openingMidlineBox && !result.visibleOpeningBox && !result.headerOuterBox && result.doorBottomY === null) {
     return null;
   }
   return applyDimensionBoundaryRequestRules(result, dimensionData, size);
@@ -2372,9 +2451,10 @@ async function detectDimensionBoxes(primaryBuffer, primaryFileID, size, job) {
               `门类型：${dimensionData.doorType}。图面方向：${dimensionData.viewSideLabel}。`,
               `客户需要标注的尺寸项：${requestedText}。`,
               '请识别这些尺寸线应贴合的关键边界，并只返回 JSON。',
-              'JSON 格式：{"outerTrimBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"openingMidlineBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"visibleOpeningBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"headerOuterBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"transomTopY":整数或null,"doorBottomY":整数,"heightBottomMode":"shared|separate","bottomNotes":"...","confidence":"high|medium|low","notes":"..."}。',
+              'JSON 格式：{"outerTrimBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"doorTrimConnectionBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"openingMidlineBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"visibleOpeningBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"headerOuterBox":{"left":整数,"top":整数,"right":整数,"bottom":整数},"transomTopY":整数或null,"doorBottomY":整数,"heightBottomMode":"shared|separate","bottomNotes":"...","confidence":"high|medium|low","notes":"..."}。',
               'outerTrimBox 是含包边外沿/最外侧门套包边的整体矩形。',
-              'openingMidlineBox 是门洞尺寸使用的边界：如果同时有门洞和见光，门洞取包边厚度中线/半包边位置；如果只有门洞没有见光，门洞取门和包边之间的连接硬边。',
+              'doorTrimConnectionBox 是门和包边之间的连接硬边：如果只有门洞没有见光，门洞取这条边；如果同时有门洞和见光，见光取这条边。',
+              'openingMidlineBox 是门洞尺寸在半包边/包边厚度中线位置的边界：只有同时有门洞和见光时，门洞取这条边。',
               'visibleOpeningBox 是见光尺寸使用的门和包边之间的连接硬边，不含外侧包边；同时有门洞和见光时，见光尺寸取这一条连接硬边。',
               '边界必须来自真实实体结构线：门套外沿、门洞内沿、门扇/门框交界、门头门柱外沿。不要把投影、渐变阴影、地面接触阴影、背景灰边、光晕、压缩噪点识别成门边界；如果阴影贴着门边，取阴影内侧的真实硬边。',
               'doorBottomY 是门体最下沿/门底统一下边界。你必须自己判断高度尺寸是否共用底部：如果底部没有下槛、台阶、门洞落差或其他额外部件，heightBottomMode 写 shared，含包边高、门洞高、见光高都应使用同一个 doorBottomY；只有实际可见底部结构导致不同高度必须落到不同底边时，才写 separate，并在 bottomNotes 说明原因。',
@@ -2546,6 +2626,7 @@ function buildDimensionBoxInstruction(dimensionBoxes) {
     '这些坐标只认真实实体结构线，不能把投影、渐变阴影、地面接触阴影、背景灰边、光晕或压缩噪点当成门边界；如果阴影贴边，尺寸线贴阴影内侧的真实硬边。',
     '宽度尺寸使用对应边界框的 left/right；高度尺寸主要使用对应边界框的 top，底部必须按 heightBottomMode 和 doorBottomY 判断。',
     dimensionBoxes.outerTrimBox ? `含包边外沿 outerTrimBox：${formatDimensionBox(dimensionBoxes.outerTrimBox)}。含包边宽使用 left/right，含包边高使用 top；底部不要机械使用 outerTrimBox.bottom。` : '',
+    dimensionBoxes.doorTrimConnectionBox ? `门和包边连接硬边 doorTrimConnectionBox：${formatDimensionBox(dimensionBoxes.doorTrimConnectionBox)}。只有门洞尺寸时门洞取这条边；同时有门洞和见光时见光取这条边。` : '',
     dimensionBoxes.openingMidlineBox ? `门洞边界 openingMidlineBox：${formatDimensionBox(dimensionBoxes.openingMidlineBox)}。门洞宽使用 left/right，门洞高使用 top；底部不要机械使用 openingMidlineBox.bottom。` : '',
     dimensionBoxes.visibleOpeningBox ? `见光净开口 visibleOpeningBox：${formatDimensionBox(dimensionBoxes.visibleOpeningBox)}。见光宽使用 left/right，见光高使用 top；底部不要机械使用 visibleOpeningBox.bottom。` : '',
     dimensionBoxes.headerOuterBox ? `含门头整体外沿 headerOuterBox：${formatDimensionBox(dimensionBoxes.headerOuterBox)}。含门头宽/高应贴这组门+门头+门柱整体外边界；含门头高可以使用 headerOuterBox.bottom。` : '',

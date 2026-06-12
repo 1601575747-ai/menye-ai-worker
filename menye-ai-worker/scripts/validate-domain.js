@@ -168,6 +168,9 @@ for (const fieldKey of expectedDimensionFields.filter((key) => key !== 'wallThic
 assert.strictEqual(DoorStructureShape.viewSide, 'front');
 assert(DoorStructureShape.boxes);
 assert(Array.isArray(DoorStructureShape.boxes.shadowRegions));
+assert(DoorStructureShape.dimensionAnchors);
+assert.strictEqual(Object.prototype.hasOwnProperty.call(DoorStructureShape.dimensionAnchors, 'doorTrimConnection'), true);
+assert.strictEqual(Object.prototype.hasOwnProperty.call(DoorStructureShape.dimensionAnchors, 'openingMidline'), true);
 assert(DoorStructureShape.keypoints);
 assert(DoorStructureShape.modes);
 
@@ -950,6 +953,37 @@ assert.strictEqual(legacyOpeningOnlyDimensionBoxes.openingMidlineBox.top, 150);
 assert.strictEqual(legacyOpeningOnlyDimensionBoxes.openingMidlineBox.right, 840);
 assert.strictEqual(legacyOpeningOnlyDimensionBoxes.openingMidlineBox.source, 'dimension-opening-door-trim-connection');
 
+const legacyAiAnchoredDimensionBoxes = normalizeDimensionBoxes({
+  outerTrimBox: { left: 80, top: 70, right: 920, bottom: 960 },
+  doorTrimConnectionBox: { left: 158, top: 148, right: 842, bottom: 940 },
+  openingMidlineBox: { left: 124, top: 108, right: 876, bottom: 940 },
+  visibleOpeningBox: { left: 160, top: 150, right: 840, bottom: 940 },
+  doorBottomY: 950,
+  heightBottomMode: 'shared'
+}, dimensionBoxTestSize, {
+  hasDoorOpeningRequest: true,
+  hasVisibleOpeningRequest: true
+});
+assert.strictEqual(legacyAiAnchoredDimensionBoxes.openingMidlineBox.left, 124);
+assert.strictEqual(legacyAiAnchoredDimensionBoxes.openingMidlineBox.top, 108);
+assert.strictEqual(legacyAiAnchoredDimensionBoxes.openingMidlineBox.right, 876);
+assert.strictEqual(legacyAiAnchoredDimensionBoxes.openingMidlineBox.source, 'dimension-opening-ai-midline');
+
+const legacyAiOpeningOnlyDimensionBoxes = normalizeDimensionBoxes({
+  outerTrimBox: { left: 80, top: 70, right: 920, bottom: 960 },
+  doorTrimConnectionBox: { left: 158, top: 148, right: 842, bottom: 940 },
+  openingMidlineBox: { left: 124, top: 108, right: 876, bottom: 940 },
+  visibleOpeningBox: { left: 160, top: 150, right: 840, bottom: 940 },
+  doorBottomY: 950,
+  heightBottomMode: 'shared'
+}, dimensionBoxTestSize, {
+  hasDoorOpeningRequest: true,
+  hasVisibleOpeningRequest: false
+});
+assert.strictEqual(legacyAiOpeningOnlyDimensionBoxes.openingMidlineBox.left, 158);
+assert.strictEqual(legacyAiOpeningOnlyDimensionBoxes.openingMidlineBox.top, 148);
+assert.strictEqual(legacyAiOpeningOnlyDimensionBoxes.openingMidlineBox.source, 'dimension-opening-door-trim-connection-ai');
+
 const normalizedInputs = normalizeDimensionInputs({
   openingWidth: '900mm',
   openingHeight: '',
@@ -1012,6 +1046,70 @@ assert.strictEqual(openingWithVisibleOpeningRule.sourceBoundary.to.value, 880);
 assert.strictEqual(openingWithVisibleVisibleRule.sourceBoundary.box, 'visibleOpening');
 assert.strictEqual(openingWithVisibleVisibleRule.sourceBoundary.from.value, 160);
 assert.strictEqual(openingWithVisibleVisibleRule.sourceBoundary.to.value, 840);
+
+const aiAnchoredDoorStructure = normalizeDoorStructure({
+  doorType: 'single',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 80, top: 70, right: 920, bottom: 960 },
+    opening: { left: 120, top: 110, right: 880, bottom: 950 },
+    visibleOpening: { left: 160, top: 150, right: 840, bottom: 940 },
+    doorLeaf: { left: 200, top: 190, right: 800, bottom: 950 },
+    handle: null,
+    lock: null,
+    transom: null,
+    header: { left: 60, top: 30, right: 940, bottom: 960 },
+    shadowRegions: [
+      { left: 70, top: 960, right: 930, bottom: 990 }
+    ]
+  },
+  dimensionAnchors: {
+    doorTrimConnection: { left: 158, top: 148, right: 842, bottom: 940 },
+    openingMidline: { left: 126, top: 112, right: 874, bottom: 940 }
+  },
+  keypoints: { doorBottomY: 950 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'high' },
+  needsUserAdjustment: false,
+  notes: 'ai-assisted dimension anchors'
+});
+const aiAnchoredBothRules = buildDimensionRules({
+  doorType: '单开门',
+  viewSide: 'front',
+  inputs: {
+    openingWidth: '900',
+    openingHeight: '2100',
+    visibleOpeningWidth: '800'
+  },
+  doorStructure: aiAnchoredDoorStructure
+});
+const aiAnchoredOpeningWidth = aiAnchoredBothRules.rules.find((rule) => rule.field === 'openingWidth');
+const aiAnchoredOpeningHeight = aiAnchoredBothRules.rules.find((rule) => rule.field === 'openingHeight');
+assert(aiAnchoredOpeningWidth);
+assert(aiAnchoredOpeningHeight);
+assert.strictEqual(aiAnchoredOpeningWidth.sourceBoundary.anchorSource, 'dimensionAnchors.openingMidline');
+assert.strictEqual(aiAnchoredOpeningWidth.sourceBoundary.from.value, 126);
+assert.strictEqual(aiAnchoredOpeningWidth.sourceBoundary.to.value, 874);
+assert.strictEqual(aiAnchoredOpeningHeight.sourceBoundary.anchorSource, 'dimensionAnchors.openingMidline');
+assert.strictEqual(aiAnchoredOpeningHeight.sourceBoundary.from.value, 112);
+
+const aiAnchoredOpeningOnlyRules = buildDimensionRules({
+  doorType: '单开门',
+  viewSide: 'front',
+  inputs: {
+    openingWidth: '900',
+    openingHeight: '2100'
+  },
+  doorStructure: aiAnchoredDoorStructure
+});
+const aiAnchoredOpeningOnlyWidth = aiAnchoredOpeningOnlyRules.rules.find((rule) => rule.field === 'openingWidth');
+const aiAnchoredOpeningOnlyHeight = aiAnchoredOpeningOnlyRules.rules.find((rule) => rule.field === 'openingHeight');
+assert(aiAnchoredOpeningOnlyWidth);
+assert(aiAnchoredOpeningOnlyHeight);
+assert.strictEqual(aiAnchoredOpeningOnlyWidth.sourceBoundary.anchorSource, 'dimensionAnchors.doorTrimConnection');
+assert.strictEqual(aiAnchoredOpeningOnlyWidth.sourceBoundary.from.value, 158);
+assert.strictEqual(aiAnchoredOpeningOnlyWidth.sourceBoundary.to.value, 842);
+assert.strictEqual(aiAnchoredOpeningOnlyHeight.sourceBoundary.from.value, 148);
 
 const openingHeightWithVisibleWidthOnly = buildDimensionRules({
   doorType: '单开门',
@@ -1207,6 +1305,10 @@ const validAiClient = {
           header: { left: 18, top: 8, right: 102, bottom: 156 },
           shadowRegions: []
         },
+        dimensionAnchors: {
+          doorTrimConnection: { left: 32, top: 30, right: 88, bottom: 154 },
+          openingMidline: { left: 25, top: 19, right: 95, bottom: 154 }
+        },
         keypoints: { doorBottomY: 154 },
         modes: { heightBottomMode: 'shared' },
         confidence: { overall: 'high' },
@@ -1227,6 +1329,7 @@ const hybridAnalyzedDoor = await analyzeDoor({
 });
 assert.strictEqual(hybridAnalyzedDoor.boxes.opening.top, 22);
 assert.strictEqual(hybridAnalyzedDoor.boxes.visibleOpening.left, 32);
+assert.strictEqual(hybridAnalyzedDoor.dimensionAnchors.openingMidline.left, 25);
 assert(hybridAnalyzedDoor.notes.includes('ai-assisted'));
 
 const nonBlockingAdjustmentAiClient = {
@@ -1323,6 +1426,9 @@ const aiPositioningPrompt = buildDoorStructureRefinementPrompt({
 assert(aiPositioningPrompt.includes('openingWidth, openingHeight, visibleOpeningWidth, visibleOpeningHeight'));
 assert(aiPositioningPrompt.includes('门洞尺寸和见光尺寸同时填写'));
 assert(aiPositioningPrompt.includes('半包边/包边厚度中线位置'));
+assert(aiPositioningPrompt.includes('dimensionAnchors'));
+assert(aiPositioningPrompt.includes('doorTrimConnection'));
+assert(aiPositioningPrompt.includes('openingMidline'));
 
 let capturedAnalyzerPrompt = '';
 const promptCaptureAiClient = {
@@ -1343,6 +1449,10 @@ const promptCaptureAiClient = {
             transom: null,
             header: { left: 18, top: 8, right: 102, bottom: 156 },
             shadowRegions: []
+          },
+          dimensionAnchors: {
+            doorTrimConnection: { left: 32, top: 30, right: 88, bottom: 154 },
+            openingMidline: { left: 25, top: 19, right: 95, bottom: 154 }
           },
           keypoints: { doorBottomY: 154 },
           modes: { heightBottomMode: 'shared' },
