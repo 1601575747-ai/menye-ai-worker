@@ -2577,6 +2577,10 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
   const useEdgeTrimReferenceColor = !!(options && options.useEdgeTrimReferenceColor);
   const preserveEdgeTrimColor = !!(options && options.preserveEdgeTrimColor);
   const hasLockDetail = !!(options && options.hasLockDetail);
+  const hasColorSample = !!(options && options.hasColorSample);
+  const textureReferenceColorPolicy = hasColorSample
+    ? '可见颜色仅用于理解纹理明暗、木纹色差和材质照片本身；最终门体颜色必须以 color-sample 颜色参考图为准，不得用材质纹理参考图颜色覆盖或替代颜色层'
+    : '可见颜色仅描述纹理照片本身；除非客户明确要求，不把该图颜色作为最终门体颜色来源';
   const backgroundDoorPartPolicy = hasLockDetail
     ? '保持第一张整门图的门体、包边、把手、玻璃、颜色、材质和门款不被重画；锁体/智能锁必须按 lock-detail 参考图执行替换，不能因为背景贴合而保留原锁不变'
     : '保持第一张整门图的门体、包边、把手、锁体、玻璃、颜色、材质和门款不被重画';
@@ -2595,7 +2599,7 @@ function buildReferenceStyleInstruction(referenceStyles, options) {
       : style.slotId === 'header-column-detail'
         ? `系统识别到${style.label || style.part || '门头/门柱参考图'}特征：来源类型=${style.sourceType || '未识别'}；门头/门柱局部可见颜色=${style.color || '未识别'}；程序取样色=${describeSampledColor(style.sampledColor) || '未取到'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；轮廓/形态=${style.shape || '未识别'}；结构=${style.structure || '未识别'}；截面/层次=${style.profile || '未识别'}；边角/收边=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；颜色字段和取样色只允许用于门头、门楣、门柱、立柱、外框装饰自身，不得作为门扇/门体/把手/锁体/气窗/背景改色来源；执行描述=${style.applyDescription || '只应用到门头、门楣、门柱、立柱、外框装饰及其衔接区域，不作为门扇款式、门体颜色、把手、锁体、气窗或背景参考'}。`
       : style.slotId === 'texture-reference'
-        ? `系统识别到${style.label || style.part || '材质纹理参考图'}特征：材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；纹理方向/结构=${style.structure || '未识别'}；纹理层次=${style.profile || '未识别'}；边缘/纹理过渡=${style.edge || '未识别'}；关键纹理细节=${style.details || '未识别'}；可见颜色=${style.color || '未识别'}；执行描述=${style.applyDescription || '只迁移材质纹理和表面质感，不把该参考图当成门型、包边、把手、锁体或玻璃参考；除非客户明确要求，不把该图颜色作为最终门体颜色来源'}。`
+        ? `系统识别到${style.label || style.part || '材质纹理参考图'}特征：材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；纹理方向/结构=${style.structure || '未识别'}；纹理层次=${style.profile || '未识别'}；边缘/纹理过渡=${style.edge || '未识别'}；关键纹理细节=${style.details || '未识别'}；可见颜色=${style.color || '未识别'}；颜色边界=${textureReferenceColorPolicy}；执行描述=${style.applyDescription || `只迁移材质纹理和表面质感，不把该参考图当成门型、包边、把手、锁体或玻璃参考；${textureReferenceColorPolicy}`}。`
       : style.slotId === 'left-leaf-detail'
         ? `系统识别到${style.label || style.part || '左门扇细节参考图'}特征：来源类型=${style.sourceType || '未识别'}；局部可见颜色=${style.color || '未识别'}；材质=${style.material || '未识别'}；表面质感=${style.finish || '未识别'}；门扇局部形态=${style.shape || '未识别'}；线条/纹理/玻璃结构=${style.structure || '未识别'}；凹凸/压线层次=${style.profile || '未识别'}；边角/收口=${style.edge || '未识别'}；关键细节=${style.details || '未识别'}；执行描述=${style.applyDescription || '只应用到第一张整门图左门扇对应区域，保持门扇数量、左右比例、中缝、把手、锁体、包边和背景不变'}。`
       : style.slotId === 'right-leaf-detail'
@@ -2863,7 +2867,8 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
   const referenceStyleInstruction = buildReferenceStyleInstruction(effectiveReferenceStyles, {
     useEdgeTrimReferenceColor: userWantsIndependentEdgeTrimColor && !(!hasEdgeTrimDetail && userWantsEdgeTrimPreserveColor),
     preserveEdgeTrimColor: edgeTrimPreserveMeansReferenceColor,
-    hasLockDetail
+    hasLockDetail,
+    hasColorSample
   });
   const edgeTrimStyle = Array.isArray(effectiveReferenceStyles)
     ? effectiveReferenceStyles.find((style) => style && style.slotId === 'edge-trim-detail')
@@ -3051,6 +3056,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
         colorSampleUsesReferenceTexture
           ? '纹理提取选项：用户已选择“同时提取色卡纹理”，因此目标色块/门板中的木纹、拉丝、颗粒、纹理方向、纹理粗细、明暗纹理色差和表面质感也属于本次颜色任务的一部分，需要随颜色一起迁移到门体可见表面。'
           : '纹理提取选项：用户没有选择“同时提取色卡纹理”，因此颜色参考图只约束颜色、色偏、明度和饱和度；不要强制把色卡里的木纹方向、颗粒、拉丝或材质纹理迁移到门体上，原门已有纹理结构应尽量保留。',
+        hasTextureReference
+          ? '同时上传材质纹理参考图时，颜色参考图仍是颜色层唯一来源；材质纹理参考图只控制纹理、木纹方向、纹理粗细、明暗纹理色差和表面质感，不得覆盖或替代颜色参考图的主色。'
+          : '',
         '颜色取样规则：颜色参考图必须按 Photoshop 吸管工具的思路执行，以图片中肉眼可见的主取样色为准。不要推断材料本身固有色，不要自动校正白平衡、环境光或拍摄偏色；看到什么颜色就用什么颜色。只避开明显高光点、反光点、深阴影、污渍和噪点。',
         colorSampleAppliesToEdgeTrim
           ? '高优先级指令：只要输入中包含颜色参考图，本次任务就默认必须执行“把整门照中的可见门面颜色统一调整为该参考颜色”的操作；这是强制目标，不需要等待客户额外说明。'

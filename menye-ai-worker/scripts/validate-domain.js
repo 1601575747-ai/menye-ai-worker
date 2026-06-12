@@ -641,6 +641,28 @@ assert(textureOnlyNoColorPrompt.includes('材质纹理参考图默认不是颜�
 assert(textureOnlyNoColorPrompt.includes('门体可见颜色仍按原整门图保持'));
 assert(textureOnlyNoColorPrompt.includes('最高优先级门体颜色冻结'));
 
+const textureWithColorSamplePrompt = buildDoorImageInstruction({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '单开门',
+  targetParts: ['door-color', 'material-texture'],
+  requirement: '颜色按色卡，纹理按材质参考图',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'color-sample', originalImageFileID: 'cloud://mock/color.png' },
+    { slotId: 'texture-reference', originalImageFileID: 'cloud://mock/texture.png' }
+  ]
+}, null, null, [
+  { slotId: 'color-sample', label: '门体颜色', color: '浅木色', colorFamily: '木色', applyDescription: '统一浅木色' },
+  { slotId: 'texture-reference', label: '材质纹理', color: '深棕色', material: '木纹', structure: '竖向细木纹', applyDescription: '迁移竖向细木纹' }
+], null);
+assert(textureWithColorSamplePrompt.includes('整门颜色：默认必须按颜色参考图统一调整整门可见门面颜色'));
+assert(textureWithColorSamplePrompt.includes('材质纹理：必须按材质纹理参考图处理门体表面的木纹'));
+assert(textureWithColorSamplePrompt.includes('最终门体颜色必须以 color-sample 颜色参考图为准'));
+assert(textureWithColorSamplePrompt.includes('颜色参考图仍是颜色层唯一来源'));
+assert(textureWithColorSamplePrompt.includes('材质纹理参考图只控制纹理、木纹方向'));
+assert(textureWithColorSamplePrompt.includes('不得覆盖或替代颜色参考图的主色'));
+
 const structureOnlyNoColorDecision = getPromptDecisionSummary({
   taskType: 'parts-compose',
   templateType: '门部件拼接效果图',
