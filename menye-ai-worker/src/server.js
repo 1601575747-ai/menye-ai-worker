@@ -1790,50 +1790,70 @@ function inferHandleMaskBox(size, handleBuffer, job) {
   }, size, isDoubleDoor ? 'door-type-center-heuristic' : 'door-type-side-heuristic');
 }
 
-function getLockFallbackScope(job) {
+function getLockFallbackScope(job, lockStyle) {
   const text = [
     job && job.doorType,
     job && job.requirement,
     job && job.backgroundInfo,
-    job && job.style
+    job && job.style,
+    lockStyle && lockStyle.lockIntegrationType,
+    lockStyle && lockStyle.shape,
+    lockStyle && lockStyle.structure,
+    lockStyle && lockStyle.details,
+    lockStyle && lockStyle.applyDescription
   ].map((item) => String(item || '')).join(' ');
   const isMultiLeaf = /双开|子母|四开|六开/.test(text);
-  const wantsBothSides = /双锁|双把手|双拉手|左右都|两边都|两侧都|两扇都|全部五金|两侧五金|左右两侧/.test(text);
+  const wantsBothSidesFromStyle = !!(lockStyle && (
+    lockStyle.isDoubleHandle ||
+    Number(lockStyle.handleCount || 0) >= 2 ||
+    /双锁|双把手|双拉手|左右都|两边都|两侧都|两扇都|全部五金|两侧五金|左右两侧/.test(text)
+  ));
+  const wantsBothSidesFromText = /双锁|双把手|双拉手|左右都|两边都|两侧都|两扇都|全部五金|两侧五金|左右两侧/.test(text);
   const side = /左侧|左边|左门|左扇|左开|左锁|左门扇/.test(text)
     ? 'left'
     : 'right';
   return {
     isMultiLeaf,
-    wantsBothSides,
+    wantsBothSides: wantsBothSidesFromText || wantsBothSidesFromStyle,
+    wantsBothSidesFromStyle,
+    isHandleIntegrated: isHandleIntegratedLockStyle(lockStyle) || /一体式|把手一体|一体锁|智能锁把手|把手智能锁/.test(text),
     side
   };
 }
 
-function inferLockMaskBox(size, lockBuffer, job) {
+function inferLockMaskBox(size, lockBuffer, job, lockStyle) {
   if (!size || !size.width || !size.height) {
     return null;
   }
-  const lockScope = getLockFallbackScope(job);
+  const lockScope = getLockFallbackScope(job, lockStyle);
   const isDoubleDoor = lockScope.isMultiLeaf;
   const shouldSpanCenter = isDoubleDoor && lockScope.wantsBothSides;
   const boxWidthRatio = isDoubleDoor
-    ? (shouldSpanCenter ? 0.28 : 0.18)
-    : 0.22;
-  const boxHeightRatio = lockBuffer && lockBuffer.length ? 0.42 : 0.34;
-  const boxWidth = Math.max(Math.round(size.width * boxWidthRatio), isDoubleDoor ? (shouldSpanCenter ? 220 : 170) : 160);
-  const boxHeight = Math.max(Math.round(size.height * boxHeightRatio), 280);
+    ? (shouldSpanCenter ? 0.28 : (lockScope.isHandleIntegrated ? 0.22 : 0.18))
+    : (lockScope.isHandleIntegrated ? 0.26 : 0.22);
+  const boxHeightRatio = lockScope.isHandleIntegrated
+    ? (lockBuffer && lockBuffer.length ? 0.58 : 0.5)
+    : (lockBuffer && lockBuffer.length ? 0.42 : 0.34);
+  const minWidth = isDoubleDoor
+    ? (shouldSpanCenter ? 220 : (lockScope.isHandleIntegrated ? 200 : 170))
+    : (lockScope.isHandleIntegrated ? 190 : 160);
+  const boxWidth = Math.max(Math.round(size.width * boxWidthRatio), minWidth);
+  const boxHeight = Math.max(Math.round(size.height * boxHeightRatio), lockScope.isHandleIntegrated ? 420 : 280);
   const centerX = isDoubleDoor
     ? (shouldSpanCenter ? size.width * 0.5 : size.width * (lockScope.side === 'left' ? 0.41 : 0.59))
     : size.width * 0.72;
   const centerY = size.height * 0.58;
+  const source = isDoubleDoor
+    ? (shouldSpanCenter
+      ? (lockScope.wantsBothSidesFromStyle ? 'lock-center-heuristic-reference-double-handle' : 'lock-center-heuristic-explicit-both-sides')
+      : (lockScope.isHandleIntegrated ? `lock-${lockScope.side}-leaf-heuristic-handle-integrated` : `lock-${lockScope.side}-leaf-heuristic`))
+    : (lockScope.isHandleIntegrated ? 'lock-side-heuristic-handle-integrated' : 'lock-side-heuristic');
   return normalizeMaskBox({
     left: centerX - (boxWidth / 2),
     top: centerY - (boxHeight / 2),
     right: centerX + (boxWidth / 2),
     bottom: centerY + (boxHeight / 2)
-  }, size, isDoubleDoor
-    ? (shouldSpanCenter ? 'lock-center-heuristic-explicit-both-sides' : `lock-${lockScope.side}-leaf-heuristic`)
-    : 'lock-side-heuristic');
+  }, size, source);
 }
 
 function getDirectHandleTargetBox(size, job, maskBox) {
@@ -3616,6 +3636,7 @@ async function buildEditArtifacts(job) {
   let directCompositeBuffer = null;
   let directCompositePlacement = null;
   let dimensionBoxes = null;
+  let preDetectedLockStyle = null;
   const referenceStyles = [];
   const detectableReferenceSlotIds = getDetectableReferenceSlotIds();
   const effectiveDetailReferences = effectiveReferenceImages
@@ -3695,7 +3716,15 @@ async function buildEditArtifacts(job) {
       });
     }
     if (!maskBox) {
-      maskBox = inferLockMaskBox(primarySize, lockBuffer, job);
+      try {
+        preDetectedLockStyle = await detectReferenceStyle(lockDetail, lockBuffer, job);
+      } catch (error) {
+        console.warn('[worker] pre-detect lock style for mask fallback failed', {
+          jobId: job._id || job.jobId,
+          message: error && error.message ? error.message : error
+        });
+      }
+      maskBox = inferLockMaskBox(primarySize, lockBuffer, job, preDetectedLockStyle);
     }
     if (maskBox) {
       const maskBuffer = buildHandleMaskBuffer(primarySize.width, primarySize.height, maskBox);
@@ -3708,11 +3737,13 @@ async function buildEditArtifacts(job) {
       continue;
     }
     try {
-      const style = await detectReferenceStyle(
-        referenceImage,
-        referenceBuffers[referenceImage.slotId],
-        job
-      );
+      const style = preDetectedLockStyle && referenceImage.slotId === 'lock-detail'
+        ? preDetectedLockStyle
+        : await detectReferenceStyle(
+          referenceImage,
+          referenceBuffers[referenceImage.slotId],
+          job
+        );
       if (style) {
         try {
           style.sampledColor = await sampleVisibleMedianColor(

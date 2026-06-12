@@ -548,6 +548,39 @@ assert(doubleDoorBothSideLockFallback);
 assert.strictEqual(doubleDoorBothSideLockFallback.source, 'lock-center-heuristic-explicit-both-sides');
 assert(doubleDoorBothSideLockFallback.left < 500 && doubleDoorBothSideLockFallback.right > 500);
 
+const singleDoorIntegratedLockFallback = inferLockMaskBox(
+  { width: 1000, height: 1000 },
+  Buffer.from('mock-lock'),
+  { doorType: '单开门', requirement: '安装智能锁' },
+  {
+    slotId: 'lock-detail',
+    lockIntegrationType: 'handle-integrated',
+    hasSmartLockPanel: true,
+    handleCount: 1,
+    applyDescription: '一体式智能锁把手'
+  }
+);
+assert(singleDoorIntegratedLockFallback);
+assert.strictEqual(singleDoorIntegratedLockFallback.source, 'lock-side-heuristic-handle-integrated');
+assert(singleDoorIntegratedLockFallback.height > doubleDoorSingleLockFallback.height, 'integrated lock fallback should cover taller handle-lock area');
+
+const doubleDoorReferenceDoubleHandleFallback = inferLockMaskBox(
+  { width: 1000, height: 1000 },
+  Buffer.from('mock-lock'),
+  { doorType: '双开门', requirement: '安装参考图智能锁' },
+  {
+    slotId: 'lock-detail',
+    lockIntegrationType: 'handle-integrated',
+    hasSmartLockPanel: true,
+    handleCount: 2,
+    isDoubleHandle: true,
+    applyDescription: '参考图是双把手智能锁'
+  }
+);
+assert(doubleDoorReferenceDoubleHandleFallback);
+assert.strictEqual(doubleDoorReferenceDoubleHandleFallback.source, 'lock-center-heuristic-reference-double-handle');
+assert(doubleDoorReferenceDoubleHandleFallback.left < 500 && doubleDoorReferenceDoubleHandleFallback.right > 500);
+
 const partPromptSlotChecks = Object.freeze({
   'handle-detail': Object.freeze(['门把手：必须', '结构化需求确认：客户上传了门把手细节图']),
   'edge-trim-detail': Object.freeze(['包边：必须', '结构化需求确认：客户上传了包边参考图']),
