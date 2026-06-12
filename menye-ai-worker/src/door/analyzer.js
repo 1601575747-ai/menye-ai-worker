@@ -932,14 +932,14 @@ function makeImageDrivenBoxes(features, analysisSize, outerTrim) {
     outerTrim.right - width * 0.055,
     { minScore: 3.5 }
   );
-  const visibleLeft = chooseEdgeNearTarget(
+  const connectionLeft = chooseEdgeNearTarget(
     verticalScores,
-    outerTrim.left + width * 0.075,
-    outerTrim.left + width * 0.18,
-    outerTrim.left + width * 0.11,
-    { minScore: 3.2 }
+    outerTrim.left + width * 0.12,
+    outerTrim.left + width * 0.22,
+    outerTrim.left + width * 0.145,
+    { minScore: 2.8 }
   );
-  const visibleRight = chooseEdgeNearTarget(
+  const connectionRight = chooseEdgeNearTarget(
     verticalScores,
     outerTrim.right - width * 0.18,
     outerTrim.right - width * 0.075,
@@ -962,16 +962,15 @@ function makeImageDrivenBoxes(features, analysisSize, outerTrim) {
     bottom: outerTrim.bottom - lowerInset
   });
   const visibleOpening = normalizeBox({
-    left: Math.max(opening.left + 1, visibleLeft),
+    left: Math.max(opening.left + 1, connectionLeft),
     top: Math.max(opening.top + 1, visibleTop),
-    right: Math.min(opening.right - 1, visibleRight),
+    right: Math.min(opening.right - 1, connectionRight),
     bottom: outerTrim.bottom - lowerInset
   });
-  const leafInsetX = Math.max(8, Math.round(width * 0.145));
   const doorLeaf = normalizeBox({
-    left: outerTrim.left + leafInsetX,
-    top: Math.max(visibleOpening.top + 1, visibleTop),
-    right: outerTrim.right - leafInsetX,
+    left: visibleOpening.left,
+    top: visibleOpening.top,
+    right: visibleOpening.right,
     bottom: outerTrim.bottom - lowerInset
   });
   const topBandBottom = Math.max(openingTop, outerTrim.top + height * 0.12);
@@ -1022,14 +1021,13 @@ function makeHeuristicBoxes(outerTrim, imageSize) {
   const width = outerTrim.right - outerTrim.left;
   const height = outerTrim.bottom - outerTrim.top;
   const openingInsetX = Math.max(8, Math.round(width * 0.055));
-  const visibleInsetX = Math.max(14, Math.round(width * 0.11));
+  const visibleInsetX = Math.max(18, Math.round(width * 0.145));
   const openingTopInset = Math.max(10, Math.round(height * 0.075));
   const visibleTopInset = Math.max(16, Math.round(height * 0.12));
   const lowerInset = Math.max(2, Math.round(height * 0.012));
   const opening = insetBox(outerTrim, openingInsetX, openingTopInset, lowerInset);
   const visibleOpening = insetBox(outerTrim, visibleInsetX, visibleTopInset, lowerInset);
-  const leafInsetX = Math.max(18, Math.round(width * 0.14));
-  const doorLeaf = insetBox(outerTrim, leafInsetX, Math.max(20, Math.round(height * 0.16)), lowerInset);
+  const doorLeaf = visibleOpening;
   const topBandHeight = Math.max(20, Math.round(height * 0.18));
 
   return {
