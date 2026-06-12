@@ -351,6 +351,160 @@ assert(handleReferencePrompt.includes('把手图含锁防污染规则'));
 assert(handleReferencePrompt.includes('这些都必须视为非把手干扰信息，不能被复制'));
 assert(handleReferencePrompt.includes('整门照中原本存在的智能锁/锁体/锁芯/猫眼/门铃位置'));
 
+const partPromptSlotChecks = Object.freeze({
+  'handle-detail': Object.freeze(['门把手：必须', '结构化需求确认：客户上传了门把手细节图']),
+  'edge-trim-detail': Object.freeze(['包边：必须', '结构化需求确认：客户上传了包边参考图']),
+  'color-sample': Object.freeze(['结构化需求确认：客户上传了颜色参考图', '颜色参考图是']),
+  'lock-detail': Object.freeze(['锁体/智能锁：必须', '结构化需求确认：客户上传了锁体/智能锁细节图']),
+  'glass-grille-detail': Object.freeze(['气窗：必须', '结构化需求确认：客户上传了气窗细节图']),
+  'header-column-detail': Object.freeze(['门头/门柱：必须', '结构化需求确认：客户上传了门头/门柱细节图', '门头/门柱覆盖包边规则']),
+  'texture-reference': Object.freeze(['材质纹理：必须', '结构化需求确认：客户上传了材质纹理参考图']),
+  'left-leaf-detail': Object.freeze(['左门扇细节：必须', '结构化需求确认：客户上传了左门扇细节图']),
+  'right-leaf-detail': Object.freeze(['右门扇细节：必须', '结构化需求确认：客户上传了右门扇细节图']),
+  'child-leaf-detail': Object.freeze(['小门扇细节：必须', '结构化需求确认：客户上传了小门扇细节图']),
+  'middle-join-detail': Object.freeze(['中缝/拼接细节：必须', '结构化需求确认：客户上传了中缝/拼接细节图']),
+  'background-reference': Object.freeze(['背景：必须', '结构化需求确认：客户上传了背景参考图'])
+});
+
+const frontendPartUploadSlots = Object.freeze({
+  '单开门': Object.freeze([
+    'handle-detail',
+    'edge-trim-detail',
+    'color-sample',
+    'lock-detail',
+    'glass-grille-detail',
+    'texture-reference'
+  ]),
+  '双开门': Object.freeze([
+    'handle-detail',
+    'edge-trim-detail',
+    'color-sample',
+    'lock-detail',
+    'glass-grille-detail',
+    'header-column-detail',
+    'texture-reference',
+    'left-leaf-detail',
+    'right-leaf-detail',
+    'middle-join-detail'
+  ]),
+  '子母门': Object.freeze([
+    'handle-detail',
+    'edge-trim-detail',
+    'color-sample',
+    'lock-detail',
+    'glass-grille-detail',
+    'texture-reference',
+    'child-leaf-detail',
+    'middle-join-detail'
+  ]),
+  '四开子母门': Object.freeze([
+    'handle-detail',
+    'edge-trim-detail',
+    'color-sample',
+    'lock-detail',
+    'glass-grille-detail',
+    'texture-reference',
+    'child-leaf-detail',
+    'left-leaf-detail',
+    'right-leaf-detail',
+    'middle-join-detail'
+  ]),
+  '四开平分门': Object.freeze([
+    'handle-detail',
+    'edge-trim-detail',
+    'color-sample',
+    'lock-detail',
+    'glass-grille-detail',
+    'texture-reference',
+    'left-leaf-detail',
+    'right-leaf-detail',
+    'middle-join-detail'
+  ]),
+  '六开门': Object.freeze([
+    'handle-detail',
+    'edge-trim-detail',
+    'color-sample',
+    'lock-detail',
+    'glass-grille-detail',
+    'texture-reference',
+    'left-leaf-detail',
+    'right-leaf-detail',
+    'middle-join-detail'
+  ])
+});
+
+function makeMockReferenceStyle(slotId) {
+  return {
+    slotId,
+    label: slotId,
+    sourceType: 'mock',
+    color: 'mock-color',
+    colorFamily: 'mock-family',
+    material: 'mock-material',
+    finish: 'mock-finish',
+    shape: 'mock-shape',
+    structure: 'mock-structure',
+    profile: 'mock-profile',
+    edge: 'mock-edge',
+    details: 'mock-details',
+    applyDescription: `apply ${slotId}`,
+    lockIntegrationType: slotId === 'lock-detail' ? 'standalone' : undefined,
+    hasSmartLockPanel: slotId === 'lock-detail' ? true : undefined,
+    hasRoundHole: slotId === 'lock-detail' ? true : undefined
+  };
+}
+
+function buildPartPromptForSlots({ doorType, slotIds, taskType = 'parts-compose' }) {
+  const isSceneEffect = taskType === 'scene-effect';
+  return buildDoorImageInstruction({
+    taskType,
+    sceneId: isSceneEffect ? 'scene-effect' : 'home-effect',
+    templateType: isSceneEffect ? '场景效果图' : '门部件拼接效果图',
+    doorType,
+    requirement: 'slot coverage regression',
+    referenceImages: [
+      { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+      ...slotIds.map((slotId) => ({ slotId, originalImageFileID: `cloud://mock/${slotId}.png` }))
+    ]
+  }, slotIds.includes('background-reference')
+    ? { source: 'background-doorway-test', left: 100, top: 100, right: 900, bottom: 980 }
+    : null, null, slotIds.map(makeMockReferenceStyle), null);
+}
+
+for (const [doorType, slotIds] of Object.entries(frontendPartUploadSlots)) {
+  for (const slotId of slotIds) {
+    const prompt = buildPartPromptForSlots({ doorType, slotIds: [slotId] });
+    for (const expectedText of partPromptSlotChecks[slotId] || []) {
+      assert(prompt.includes(expectedText), `${doorType} single slot ${slotId} missing prompt text: ${expectedText}`);
+    }
+  }
+
+  const prompt = buildPartPromptForSlots({ doorType, slotIds });
+  assert(prompt.includes('以上任务是并列关系，不是互斥关系'), `${doorType} missing parallel task instruction`);
+  assert(prompt.includes('不要只执行其中一个参考图任务后忽略其他已上传参考图'), `${doorType} missing multi-reference no-ignore instruction`);
+  for (const slotId of slotIds) {
+    if (slotId === 'edge-trim-detail' && slotIds.includes('header-column-detail')) {
+      assert(prompt.includes('门头/门柱覆盖包边规则'), `${doorType} missing header-column edge-trim override instruction`);
+      assert(!prompt.includes('包边：必须'), `${doorType} should suppress separate edge-trim task when header-column is uploaded`);
+      continue;
+    }
+    for (const expectedText of partPromptSlotChecks[slotId] || []) {
+      assert(prompt.includes(expectedText), `${doorType} combo slot ${slotId} missing prompt text: ${expectedText}`);
+    }
+  }
+}
+
+const sceneEffectBackgroundPrompt = buildPartPromptForSlots({
+  doorType: '单开门',
+  slotIds: ['background-reference'],
+  taskType: 'scene-effect'
+});
+for (const expectedText of partPromptSlotChecks['background-reference']) {
+  assert(sceneEffectBackgroundPrompt.includes(expectedText), `scene-effect background prompt missing: ${expectedText}`);
+}
+assert(sceneEffectBackgroundPrompt.includes('输入顺序强约束'));
+assert(sceneEffectBackgroundPrompt.includes('输入图1背景底图 + 输入图2整门抠图贴入输入图1的 mask 门位区域'));
+
 const mockDoorStructure = Object.freeze({
   doorType: 'single',
   viewSide: 'front',
