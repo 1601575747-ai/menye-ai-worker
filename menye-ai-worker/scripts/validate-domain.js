@@ -2006,6 +2006,40 @@ if (sharp && fs.existsSync(localSingleDoorRegressionPath)) {
   assert(localSingleDoor.boxes.visibleOpening.top - localSingleDoor.boxes.opening.top <= 32);
 }
 
+const localHeaderDoubleDoorRegressionPath = path.join(
+  process.env.HOME || '',
+  'Downloads',
+  '2zHw2vpbH7-C63812a30781d36688d732a08f18d2b87.png'
+);
+if (sharp && fs.existsSync(localHeaderDoubleDoorRegressionPath)) {
+  const localHeaderDoubleDoorImage = await sharp(localHeaderDoubleDoorRegressionPath).rotate().png().toBuffer();
+  const localHeaderDoubleDoorMetadata = await sharp(localHeaderDoubleDoorImage).metadata();
+  const localHeaderDoubleDoor = await analyzeDoor({
+    image: localHeaderDoubleDoorImage,
+    imageSize: {
+      width: localHeaderDoubleDoorMetadata.width,
+      height: localHeaderDoubleDoorMetadata.height
+    },
+    doorType: 'double',
+    viewSide: 'front',
+    taskType: TaskType.DIMENSION_ANNOTATION,
+    mode: 'heuristic'
+  });
+  const headerOuterHeight = localHeaderDoubleDoor.boxes.outerTrim.bottom - localHeaderDoubleDoor.boxes.outerTrim.top;
+  assert(
+    localHeaderDoubleDoor.boxes.opening.top >= localHeaderDoubleDoor.boxes.outerTrim.top + headerOuterHeight * 0.20,
+    'double door with prominent header should not use arch/header top as opening top'
+  );
+  assert(
+    localHeaderDoubleDoor.boxes.visibleOpening.top >= localHeaderDoubleDoor.boxes.outerTrim.top + headerOuterHeight * 0.22,
+    'double door with prominent header should not use arch/header top as visible opening top'
+  );
+  assert(
+    localHeaderDoubleDoor.boxes.transom.bottom <= localHeaderDoubleDoor.boxes.opening.top,
+    'prominent header/transom region should remain above the opening top'
+  );
+}
+
 const analyzerRules = buildDimensionRules({
   doorType: mockDoor.doorType,
   viewSide: mockDoor.viewSide,

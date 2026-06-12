@@ -1052,17 +1052,26 @@ function findRowInBand(horizontalScores, outerTrim, startRatio, endRatio, target
   });
 }
 
-function chooseOpeningTopRow(horizontalScores, outerTrim) {
+function chooseOpeningTopRow(horizontalScores, outerTrim, doorType) {
   const height = outerTrim.bottom - outerTrim.top;
   const topRow = findRowInBand(horizontalScores, outerTrim, 0.025, 0.13, 0.055, {
     minScore: 3
   });
-  if (topRow.found) {
-    return topRow.index;
-  }
   const midRow = findRowInBand(horizontalScores, outerTrim, 0.23, 0.40, 0.29, {
     minScore: 3
   });
+  if (topRow.found) {
+    const topDistance = topRow.index - outerTrim.top;
+    const midGap = midRow.found ? midRow.index - topRow.index : 0;
+    const likelyProminentHeader = isMultiLeafDoorType(doorType) &&
+      midRow.found &&
+      topDistance <= height * 0.16 &&
+      midGap >= height * 0.12;
+    if (likelyProminentHeader) {
+      return midRow.index;
+    }
+    return topRow.index;
+  }
   if (midRow.found) {
     return midRow.index;
   }
@@ -1220,7 +1229,7 @@ function makeImageDrivenBoxes(features, analysisSize, outerTrim, doorType) {
       { minScore: 3.2 }
     );
 
-  const openingTop = chooseOpeningTopRow(horizontalScores, outerTrim);
+  const openingTop = chooseOpeningTopRow(horizontalScores, outerTrim, doorType);
   const effectiveOuterTrim = refineOuterTrimTopForSceneImage(
     outerTrim,
     openingTop,
