@@ -126,6 +126,7 @@ async function runDimensionAnnotationPipeline(job = {}) {
     doorType: normalizedJob.doorType,
     viewSide: normalizedJob.viewSide,
     taskType: normalizedJob.taskType,
+    dimensionInputs: normalizedJob.inputs,
     mode: normalizedJob.analyzerMode
   });
 

@@ -17,6 +17,9 @@ const {
   mergeAiStructureWithHeuristic
 } = require('../src/door/analyzer');
 const {
+  buildDoorStructureRefinementPrompt
+} = require('../src/door/prompts');
+const {
   doorTypeProfiles,
   normalizeDoorType,
   getDoorTypeProfile,
@@ -1181,6 +1184,69 @@ assert.notStrictEqual(fallbackAnalyzedDoor.boxes.outerTrim.left, -999);
 assert.strictEqual(fallbackAnalyzedDoor.needsUserAdjustment, false);
 assert(fallbackAnalyzedDoor.notes.includes('AI analyzer fallback'));
 
+const aiPositioningPrompt = buildDoorStructureRefinementPrompt({
+  doorType: 'single',
+  viewSide: 'front',
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  imageSize: { width: 1000, height: 1000 },
+  dimensionInputs: {
+    openingWidth: '900',
+    openingHeight: '2400',
+    visibleOpeningWidth: '800',
+    visibleOpeningHeight: '2300'
+  },
+  heuristicStructure: mockDoorStructure
+});
+assert(aiPositioningPrompt.includes('openingWidth, openingHeight, visibleOpeningWidth, visibleOpeningHeight'));
+assert(aiPositioningPrompt.includes('门洞尺寸和见光尺寸同时填写'));
+assert(aiPositioningPrompt.includes('半包边/包边厚度中线位置'));
+
+let capturedAnalyzerPrompt = '';
+const promptCaptureAiClient = {
+  responses: {
+    create: async (request) => {
+      capturedAnalyzerPrompt = request.input[0].content[0].text;
+      return {
+        output_text: JSON.stringify({
+          doorType: 'single',
+          viewSide: 'front',
+          boxes: {
+            outerTrim: { left: 18, top: 8, right: 102, bottom: 156 },
+            opening: { left: 27, top: 22, right: 93, bottom: 154 },
+            visibleOpening: { left: 32, top: 30, right: 88, bottom: 154 },
+            doorLeaf: { left: 35, top: 34, right: 85, bottom: 154 },
+            handle: null,
+            lock: null,
+            transom: null,
+            header: { left: 18, top: 8, right: 102, bottom: 156 },
+            shadowRegions: []
+          },
+          keypoints: { doorBottomY: 154 },
+          modes: { heightBottomMode: 'shared' },
+          confidence: { overall: 'high', opening: 'high', visibleOpening: 'high', outerTrim: 'high', doorLeaf: 'high' },
+          needsUserAdjustment: false,
+          notes: 'prompt capture ai structure'
+        })
+      };
+    }
+  }
+};
+await analyzeDoor({
+  image: hybridAnalyzerImage,
+  imageSize: { width: 120, height: 160 },
+  doorType: 'single',
+  viewSide: 'front',
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  dimensionInputs: {
+    openingWidth: '900',
+    visibleOpeningWidth: '800'
+  },
+  mode: 'hybrid',
+  client: promptCaptureAiClient
+});
+assert(capturedAnalyzerPrompt.includes('openingWidth, visibleOpeningWidth'));
+assert(capturedAnalyzerPrompt.includes('门洞尺寸和见光尺寸同时填写'));
+
 const heuristicWideStructure = normalizeDoorStructure({
   doorType: 'double',
   viewSide: 'front',
@@ -1230,6 +1296,52 @@ assert.strictEqual(guardedStructure.boxes.visibleOpening.left, heuristicWideStru
 assert.strictEqual(guardedStructure.boxes.visibleOpening.right, heuristicWideStructure.boxes.visibleOpening.right);
 assert(guardedStructure.notes.includes('restored from heuristic guard'));
 
+const heuristicWrongTopStructure = normalizeDoorStructure({
+  doorType: 'single',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 100, top: 20, right: 900, bottom: 980 },
+    opening: { left: 160, top: 360, right: 840, bottom: 970 },
+    visibleOpening: { left: 190, top: 390, right: 810, bottom: 970 },
+    doorLeaf: { left: 190, top: 390, right: 810, bottom: 970 },
+    handle: null,
+    lock: null,
+    transom: null,
+    header: { left: 100, top: 20, right: 900, bottom: 980 },
+    shadowRegions: []
+  },
+  keypoints: { doorBottomY: 970 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'heuristic' },
+  needsUserAdjustment: false,
+  notes: 'heuristic confused by horizontal slats'
+});
+const aiCorrectedTopStructure = normalizeDoorStructure({
+  doorType: 'single',
+  viewSide: 'front',
+  boxes: {
+    outerTrim: { left: 100, top: 20, right: 900, bottom: 980 },
+    opening: { left: 158, top: 78, right: 842, bottom: 970 },
+    visibleOpening: { left: 190, top: 118, right: 810, bottom: 970 },
+    doorLeaf: { left: 190, top: 118, right: 810, bottom: 970 },
+    handle: null,
+    lock: null,
+    transom: null,
+    header: { left: 100, top: 20, right: 900, bottom: 980 },
+    shadowRegions: []
+  },
+  keypoints: { doorBottomY: 970 },
+  modes: { heightBottomMode: 'shared' },
+  confidence: { overall: 'high', opening: 'high', visibleOpening: 'high', outerTrim: 'high', doorLeaf: 'high' },
+  needsUserAdjustment: false,
+  notes: 'ai corrected top edge'
+});
+const aiCorrectionKeptStructure = mergeAiStructureWithHeuristic(aiCorrectedTopStructure, heuristicWrongTopStructure, {
+  imageSize: { width: 1000, height: 1000 }
+});
+assert.strictEqual(aiCorrectionKeptStructure.boxes.opening.top, aiCorrectedTopStructure.boxes.opening.top);
+assert.strictEqual(aiCorrectionKeptStructure.boxes.visibleOpening.top, aiCorrectedTopStructure.boxes.visibleOpening.top);
+
 const mockDoor = mockAnalyzer({
   doorType: '双开门',
   viewSide: 'back'
@@ -1251,6 +1363,40 @@ const syntheticVisibleWidth = syntheticDoubleDoor.boxes.visibleOpening.right - s
 assert(syntheticVisibleWidth >= syntheticOpeningWidth * 0.95);
 assert(Math.abs(syntheticDoubleDoor.boxes.visibleOpening.left - syntheticDoubleDoor.boxes.opening.left) <= 3);
 assert(Math.abs(syntheticDoubleDoor.boxes.visibleOpening.right - syntheticDoubleDoor.boxes.opening.right) <= 3);
+
+const syntheticSlattedDoorImage = Buffer.from([
+  '<svg xmlns="http://www.w3.org/2000/svg" width="260" height="340">',
+  '<rect width="260" height="340" fill="#f8f8f8"/>',
+  '<rect x="58" y="18" width="144" height="305" fill="#9a5828"/>',
+  '<rect x="70" y="42" width="120" height="268" fill="#b66a34"/>',
+  '<rect x="78" y="60" width="104" height="242" fill="#bd733c"/>',
+  '<line x1="70" y1="42" x2="190" y2="42" stroke="#40200f" stroke-width="3"/>',
+  '<line x1="78" y1="60" x2="182" y2="60" stroke="#4a2512" stroke-width="3"/>',
+  Array.from({ length: 9 }, (_, index) => {
+    const y = 112 + index * 20;
+    return `<line x1="80" y1="${y}" x2="180" y2="${y}" stroke="#4b2410" stroke-width="3"/>`;
+  }).join(''),
+  '<rect x="188" y="42" width="14" height="268" fill="#8f4b21"/>',
+  '<ellipse cx="58" cy="330" rx="62" ry="12" fill="#d6d6d6" opacity="0.52"/>',
+  '</svg>'
+].join(''));
+const syntheticSlattedDoor = await analyzeDoor({
+  image: syntheticSlattedDoorImage,
+  imageSize: { width: 260, height: 340 },
+  doorType: 'single',
+  viewSide: 'front',
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  mode: 'heuristic'
+});
+const slattedOuterHeight = syntheticSlattedDoor.boxes.outerTrim.bottom - syntheticSlattedDoor.boxes.outerTrim.top;
+assert(
+  syntheticSlattedDoor.boxes.opening.top <= syntheticSlattedDoor.boxes.outerTrim.top + slattedOuterHeight * 0.16,
+  'slatted door opening top should prefer the upper structural edge, not mid-door slat lines'
+);
+assert(
+  syntheticSlattedDoor.boxes.visibleOpening.top <= syntheticSlattedDoor.boxes.outerTrim.top + slattedOuterHeight * 0.20,
+  'slatted door visible opening top should stay near the top structural opening'
+);
 
 const localSingleDoorRegressionPath = path.join(
   process.env.HOME || '',

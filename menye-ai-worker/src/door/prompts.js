@@ -1,11 +1,43 @@
 'use strict';
 
-function buildDoorStructurePrompt({ doorType, viewSide, taskType } = {}) {
+function getRequestedDimensionKeys(dimensionInputs) {
+  const source = dimensionInputs && typeof dimensionInputs === 'object' ? dimensionInputs : {};
+  return Object.entries(source)
+    .filter(([, value]) => value !== '' && value !== null && value !== undefined)
+    .map(([key]) => key);
+}
+
+function buildDimensionPositioningHints(dimensionInputs) {
+  const requestedKeys = getRequestedDimensionKeys(dimensionInputs);
+  if (!requestedKeys.length) {
+    return '';
+  }
+  const requestedSet = new Set(requestedKeys);
+  const hasOpening = requestedSet.has('openingWidth') || requestedSet.has('openingHeight');
+  const hasVisibleOpening = requestedSet.has('visibleOpeningWidth') || requestedSet.has('visibleOpeningHeight');
+  return [
+    `客户本次填写的尺寸字段 key：${requestedKeys.join(', ')}。`,
+    '你仍然只做结构定位，不画尺寸线；后续程序会根据这些结构边界确定性绘制。',
+    hasOpening && !hasVisibleOpening
+      ? '本次只有门洞尺寸时，后续程序会把门洞尺寸贴到门和包边之间的连接硬边；因此 visibleOpening 必须准确表示这条连接硬边。'
+      : '',
+    hasOpening && hasVisibleOpening
+      ? '本次门洞尺寸和见光尺寸同时填写时，visibleOpening 必须准确表示门和包边之间的连接硬边；后续程序会用 outerTrim 与 visibleOpening 自动计算门洞尺寸的半包边/包边厚度中线位置。'
+      : '',
+    !hasOpening && hasVisibleOpening
+      ? '本次只有见光尺寸时，visibleOpening 必须准确表示不包含门洞外扩部分的净可见开口边界。'
+      : '',
+    '不要把门板内部横纹、玻璃分隔线、中缝、把手、锁体、阴影或装饰线误判为 opening/visibleOpening 的左右或上边界。'
+  ].filter(Boolean).join('\n');
+}
+
+function buildDoorStructurePrompt({ doorType, viewSide, taskType, dimensionInputs } = {}) {
   return [
     '你只做门结构识别，不生成图片，不修改图片。',
     `任务类型：${taskType || '未指定'}。`,
     `门类型：${doorType || '未指定'}。`,
     `图面方向：${viewSide === 'back' ? 'back' : 'front'}。`,
+    buildDimensionPositioningHints(dimensionInputs),
     '必须只输出 JSON，不要输出 markdown，不要输出自然语言解释。',
     '识别真实实体硬边：门套外沿 outerTrim、门洞 opening、见光 visibleOpening、门扇 doorLeaf。',
     '可见时识别 handle、lock、transom、header；不可见或无法判断时填 null。',
@@ -21,7 +53,7 @@ function buildDoorStructurePrompt({ doorType, viewSide, taskType } = {}) {
   ].join('\n');
 }
 
-function buildDoorStructureRefinementPrompt({ doorType, viewSide, taskType, imageSize, heuristicStructure } = {}) {
+function buildDoorStructureRefinementPrompt({ doorType, viewSide, taskType, imageSize, heuristicStructure, dimensionInputs } = {}) {
   const sizeText = imageSize && imageSize.width && imageSize.height
     ? `原图像素尺寸：width=${imageSize.width}, height=${imageSize.height}。所有坐标必须使用这个原图像素坐标，不要输出 0-1 比例。`
     : '所有坐标必须使用原图像素坐标，不要输出 0-1 比例。';
@@ -35,7 +67,7 @@ function buildDoorStructureRefinementPrompt({ doorType, viewSide, taskType, imag
     })
     : '{}';
   return [
-    buildDoorStructurePrompt({ doorType, viewSide, taskType }),
+    buildDoorStructurePrompt({ doorType, viewSide, taskType, dimensionInputs }),
     sizeText,
     '你现在是在校正程序给出的候选门结构边界。候选结果可能不准，必须以图片中真实实体硬边为准。',
     '候选 DoorStructure JSON：',

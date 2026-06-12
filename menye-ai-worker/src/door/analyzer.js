@@ -267,13 +267,21 @@ function isSuspiciouslyNarrow(aiBox, heuristicBox, outerBox, options = {}) {
     (outerWidth > 0 && aiWidth < outerWidth * outerRatio);
 }
 
-function isSuspiciouslyShort(aiBox, heuristicBox, imageSize, options = {}) {
-  if (!aiBox || !heuristicBox) {
+function isSuspiciousVerticalBoundary(box, outerBox, options = {}) {
+  if (!box || !outerBox) {
     return false;
   }
-  const threshold = Math.max(24, (Number(imageSize && imageSize.height) || 1000) * (Number(options.maxDeltaRatio) || 0.12));
-  return Math.abs(aiBox.top - heuristicBox.top) > threshold ||
-    Math.abs(aiBox.bottom - heuristicBox.bottom) > threshold;
+  const outerHeight = outerBox.bottom - outerBox.top;
+  const boxHeight = box.bottom - box.top;
+  if (!hasNumber(outerHeight) || outerHeight <= 0 || !hasNumber(boxHeight) || boxHeight <= 0) {
+    return true;
+  }
+  const maxTopRatio = Number(options.maxTopRatio) || 0.56;
+  const minHeightRatio = Number(options.minHeightRatio) || 0.34;
+  const minBottomRatio = Number(options.minBottomRatio) || 0.64;
+  return box.top > outerBox.top + outerHeight * maxTopRatio ||
+    boxHeight < outerHeight * minHeightRatio ||
+    box.bottom < outerBox.top + outerHeight * minBottomRatio;
 }
 
 function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context = {}) {
@@ -299,17 +307,19 @@ function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context 
     heuristicRatio: 0.6,
     outerRatio: 0.46
   });
-  const openingTooShort = isSuspiciouslyShort(aiBoxes.opening, heuristicBoxes.opening, context.imageSize, {
-    maxDeltaRatio: 0.16
+  const openingSuspiciousY = isSuspiciousVerticalBoundary(aiBoxes.opening, outerForRatios, {
+    maxTopRatio: 0.58,
+    minHeightRatio: 0.34,
+    minBottomRatio: 0.64
   });
   nextBoxes.opening = mergeBoxSpan(aiBoxes.opening, heuristicBoxes.opening, {
     useHeuristicX: openingTooNarrow,
-    useHeuristicY: openingTooShort
+    useHeuristicY: openingSuspiciousY
   }) || aiBoxes.opening || heuristicBoxes.opening;
   if (openingTooNarrow) {
     notes.push('opening left/right restored from heuristic guard');
   }
-  if (openingTooShort) {
+  if (openingSuspiciousY) {
     notes.push('opening top/bottom restored from heuristic guard');
   }
 
@@ -317,17 +327,19 @@ function mergeAiStructureWithHeuristic(aiStructure, heuristicStructure, context 
     heuristicRatio: 0.6,
     outerRatio: 0.4
   });
-  const visibleTooShort = isSuspiciouslyShort(aiBoxes.visibleOpening, heuristicBoxes.visibleOpening, context.imageSize, {
-    maxDeltaRatio: 0.16
+  const visibleSuspiciousY = isSuspiciousVerticalBoundary(aiBoxes.visibleOpening, outerForRatios, {
+    maxTopRatio: 0.62,
+    minHeightRatio: 0.3,
+    minBottomRatio: 0.6
   });
   nextBoxes.visibleOpening = mergeBoxSpan(aiBoxes.visibleOpening, heuristicBoxes.visibleOpening, {
     useHeuristicX: visibleTooNarrow,
-    useHeuristicY: visibleTooShort
+    useHeuristicY: visibleSuspiciousY
   }) || aiBoxes.visibleOpening || heuristicBoxes.visibleOpening;
   if (visibleTooNarrow) {
     notes.push('visibleOpening left/right restored from heuristic guard');
   }
-  if (visibleTooShort) {
+  if (visibleSuspiciousY) {
     notes.push('visibleOpening top/bottom restored from heuristic guard');
   }
 
@@ -912,17 +924,17 @@ function findRowInBand(horizontalScores, outerTrim, startRatio, endRatio, target
 
 function chooseOpeningTopRow(horizontalScores, outerTrim) {
   const height = outerTrim.bottom - outerTrim.top;
-  const midRow = findRowInBand(horizontalScores, outerTrim, 0.23, 0.40, 0.29, {
-    minScore: 3
-  });
-  if (midRow.found) {
-    return midRow.index;
-  }
   const topRow = findRowInBand(horizontalScores, outerTrim, 0.025, 0.13, 0.055, {
     minScore: 3
   });
   if (topRow.found) {
     return topRow.index;
+  }
+  const midRow = findRowInBand(horizontalScores, outerTrim, 0.23, 0.40, 0.29, {
+    minScore: 3
+  });
+  if (midRow.found) {
+    return midRow.index;
   }
   return Math.round(outerTrim.top + height * 0.075);
 }
@@ -963,6 +975,38 @@ function findFirstReliableEdge(scores, start, end, options = {}) {
 
   return Object.freeze({
     index: Math.round(start),
+    found: false
+  });
+}
+
+function findLastReliableEdge(scores, start, end, options = {}) {
+  const safeStart = clamp(Math.floor(start), 0, scores.length - 2);
+  const safeEnd = clamp(Math.ceil(end), safeStart + 1, scores.length - 1);
+  const threshold = Math.max(
+    Number(options.minScore) || 0,
+    localPercentile(scores, safeStart, safeEnd, 0.58) * (Number(options.thresholdRatio) || 0.62)
+  );
+  const peakRadius = Number(options.peakRadius) || 2;
+  const minRun = Math.max(1, Number(options.minRun) || 1);
+
+  for (let index = safeEnd; index >= safeStart; index -= 1) {
+    let run = 0;
+    for (let offset = 0; offset < minRun && index - offset >= safeStart; offset += 1) {
+      if ((scores[index - offset] || 0) >= threshold) {
+        run += 1;
+      }
+    }
+    const signal = scores[index] || 0;
+    if (run >= minRun && signal >= threshold && isLocalPeak(scores, index, peakRadius)) {
+      return Object.freeze({
+        index,
+        found: true
+      });
+    }
+  }
+
+  return Object.freeze({
+    index: Math.round(end),
     found: false
   });
 }
@@ -1011,22 +1055,38 @@ function makeImageDrivenBoxes(features, analysisSize, outerTrim, doorType) {
     outerTrim.right - width * 0.055,
     { minScore: 3.5 }
   );
-  const connectionLeft = multiLeaf
-    ? openingLeft
+  const connectionLeftCandidate = multiLeaf
+    ? { index: openingLeft, found: true }
+    : findFirstReliableEdge(
+      verticalScores,
+      openingLeft + Math.max(3, width * 0.025),
+      outerTrim.left + width * 0.23,
+      { minScore: 2.8, peakRadius: 2 }
+    );
+  const connectionRightCandidate = multiLeaf
+    ? { index: openingRight, found: true }
+    : findLastReliableEdge(
+      verticalScores,
+      outerTrim.right - width * 0.23,
+      openingRight - Math.max(3, width * 0.012),
+      { minScore: 3.0, peakRadius: 2 }
+    );
+  const connectionLeft = connectionLeftCandidate.found
+    ? connectionLeftCandidate.index
     : chooseEdgeNearTarget(
       verticalScores,
+      outerTrim.left + width * 0.09,
+      outerTrim.left + width * 0.20,
       outerTrim.left + width * 0.12,
-      outerTrim.left + width * 0.22,
-      outerTrim.left + width * 0.145,
       { minScore: 2.8 }
     );
-  const connectionRight = multiLeaf
-    ? openingRight
+  const connectionRight = connectionRightCandidate.found
+    ? connectionRightCandidate.index
     : chooseEdgeNearTarget(
       verticalScores,
-      outerTrim.right - width * 0.18,
-      outerTrim.right - width * 0.075,
-      outerTrim.right - width * 0.11,
+      outerTrim.right - width * 0.20,
+      outerTrim.right - width * 0.06,
+      outerTrim.right - width * 0.10,
       { minScore: 3.2 }
     );
 
@@ -1229,7 +1289,7 @@ async function heuristicAnalyzer({ image, imageSize, doorType, viewSide } = {}) 
   }
 }
 
-async function openAIDoorAnalyzer({ image, imageUrl, imageSize, doorType, viewSide, taskType, client, heuristicStructure } = {}) {
+async function openAIDoorAnalyzer({ image, imageUrl, imageSize, doorType, viewSide, taskType, dimensionInputs, client, heuristicStructure } = {}) {
   const openai = client || createOpenAIClient();
   const resolvedImageUrl = imageUrl || imageBufferToDataUrl(image);
   if (!openai || !resolvedImageUrl) {
@@ -1253,8 +1313,8 @@ async function openAIDoorAnalyzer({ image, imageUrl, imageSize, doorType, viewSi
           {
             type: 'input_text',
             text: heuristicStructure
-              ? buildDoorStructureRefinementPrompt({ doorType, viewSide, taskType, imageSize, heuristicStructure })
-              : buildDoorStructurePrompt({ doorType, viewSide, taskType })
+              ? buildDoorStructureRefinementPrompt({ doorType, viewSide, taskType, imageSize, heuristicStructure, dimensionInputs })
+              : buildDoorStructurePrompt({ doorType, viewSide, taskType, dimensionInputs })
           },
           {
             type: 'input_image',
@@ -1289,7 +1349,7 @@ function shouldUseHybridAIAnalyzer(mode) {
   return process.env.USE_AI_DIMENSION_ANALYZER !== 'false';
 }
 
-async function analyzeDoor({ image, imageUrl, imageSize, doorType, viewSide, taskType, mode, client } = {}) {
+async function analyzeDoor({ image, imageUrl, imageSize, doorType, viewSide, taskType, dimensionInputs, mode, client } = {}) {
   const normalizedTaskType = taskType || TaskType.DIMENSION_ANNOTATION;
   if (mode === 'openai') {
     try {
@@ -1300,6 +1360,7 @@ async function analyzeDoor({ image, imageUrl, imageSize, doorType, viewSide, tas
         doorType,
         viewSide,
         taskType: normalizedTaskType,
+        dimensionInputs,
         client
       });
     } catch (error) {
@@ -1341,6 +1402,7 @@ async function analyzeDoor({ image, imageUrl, imageSize, doorType, viewSide, tas
         doorType,
         viewSide,
         taskType: normalizedTaskType,
+        dimensionInputs,
         client,
         heuristicStructure
       });
