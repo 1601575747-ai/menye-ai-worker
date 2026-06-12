@@ -383,6 +383,39 @@ function getBackgroundReferenceImage(job) {
   return referenceImages.find((item) => item.slotId === 'background-reference') || null;
 }
 
+function hasNonBackgroundReferenceImage(job) {
+  return getReferenceImages(job).some((item) => (
+    item &&
+    item.originalImageFileID &&
+    item.slotId &&
+    item.slotId !== 'full-door' &&
+    item.slotId !== 'background-reference'
+  ));
+}
+
+function hasDoorEditTextRequest(job) {
+  const text = [
+    job && job.requirement,
+    job && job.backgroundInfo,
+    job && job.style
+  ].map((item) => String(item || '')).join(' ');
+  if (!text.trim()) {
+    return false;
+  }
+  return /改色|换色|调色|颜色参考|参考颜色|色卡|色号|编号|门体颜色|门扇颜色|门板颜色|整门颜色|把手|拉手|锁体|智能锁|锁孔|锁芯|猫眼|门铃|包边|门套|收口|压线|门板线条|门板造型|门芯|凹凸|浮雕|气窗|玻璃|格栅|透光窗|门头|门楣|门柱|罗马柱|立柱|材质|纹理|木纹|拉丝|肤感|哑光|亮光/i.test(text);
+}
+
+function shouldUseDirectBackgroundComposite(job) {
+  const taskType = normalizeTaskType(job);
+  const targetParts = Array.isArray(job && job.targetParts) ? job.targetParts.filter(Boolean) : [];
+  const hasOnlyBackgroundTarget = !targetParts.length || targetParts.every((item) => item === 'background' || item === '背景');
+  return (taskType === 'scene-effect' || taskType === TaskType.BACKGROUND_REPLACE) &&
+    hasOnlyBackgroundTarget &&
+    !!getBackgroundReferenceImage(job) &&
+    !hasNonBackgroundReferenceImage(job) &&
+    !hasDoorEditTextRequest(job);
+}
+
 function getReferenceSlotLabel(slotId) {
   switch (slotId) {
     case 'full-door':
@@ -3615,7 +3648,7 @@ async function buildEditArtifacts(job) {
           ? 'background-reference-mask'
           : 'background-reference-mask-fallback';
       }
-      if (sharp && ENABLE_DIRECT_BACKGROUND_COMPOSITE) {
+      if (sharp && ENABLE_DIRECT_BACKGROUND_COMPOSITE && shouldUseDirectBackgroundComposite(job)) {
         try {
           directCompositePlacement = await detectDoorPlacement(
             primaryBuffer,
@@ -3658,7 +3691,9 @@ async function buildEditArtifacts(job) {
       } else if (sharp) {
         console.log('[worker] direct background composite disabled; using image api scene generation', {
           jobId: job._id || job.jobId,
-          enableEnv: 'ENABLE_DIRECT_BACKGROUND_COMPOSITE=true'
+          enableEnv: 'ENABLE_DIRECT_BACKGROUND_COMPOSITE=true',
+          hasNonBackgroundReferenceImage: hasNonBackgroundReferenceImage(job),
+          hasDoorEditTextRequest: hasDoorEditTextRequest(job)
         });
       }
     }
@@ -4197,5 +4232,6 @@ if (require.main === module) {
 module.exports = {
   buildDoorImageInstruction,
   getPromptDecisionSummary,
-  normalizeTaskType
+  normalizeTaskType,
+  shouldUseDirectBackgroundComposite
 };

@@ -45,7 +45,8 @@ const {
 const {
   buildDoorImageInstruction,
   getPromptDecisionSummary,
-  normalizeTaskType
+  normalizeTaskType,
+  shouldUseDirectBackgroundComposite
 } = require('../src/server');
 const { JobStatus } = require('../src/jobs/status');
 const { ErrorCode } = require('../src/utils/errors');
@@ -329,6 +330,48 @@ assert(backgroundPrompt.includes('输入图2是整门上下文图'));
 assert(backgroundPrompt.includes('旧门、门洞或预留门位只用于定位'));
 assert(backgroundPrompt.includes('背景参考图不能作为门款'));
 assert(backgroundPrompt.includes('最终结果应等于：输入图1背景底图 + 输入图2整门抠图贴入输入图1的 mask 门位区域'));
+assert.strictEqual(shouldUseDirectBackgroundComposite({
+  taskType: 'scene-effect',
+  requirement: '',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' }
+  ]
+}), true);
+assert.strictEqual(shouldUseDirectBackgroundComposite({
+  taskType: 'parts-compose',
+  requirement: '',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' }
+  ]
+}), false);
+assert.strictEqual(shouldUseDirectBackgroundComposite({
+  taskType: 'scene-effect',
+  targetParts: ['background', 'lock'],
+  requirement: '',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' }
+  ]
+}), false);
+assert.strictEqual(shouldUseDirectBackgroundComposite({
+  taskType: 'scene-effect',
+  requirement: '',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' },
+    { slotId: 'lock-detail', originalImageFileID: 'cloud://mock/lock.png' }
+  ]
+}), false);
+assert.strictEqual(shouldUseDirectBackgroundComposite({
+  taskType: 'scene-effect',
+  requirement: '背景按参考图，门体颜色改成浅木色，智能锁也换掉',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'background-reference', originalImageFileID: 'cloud://mock/background.jpg' }
+  ]
+}), false);
 
 const handleReferencePrompt = buildDoorImageInstruction({
   taskType: 'handle-replacement',
