@@ -46,7 +46,8 @@ const {
   buildDoorImageInstruction,
   getPromptDecisionSummary,
   normalizeTaskType,
-  shouldUseDirectBackgroundComposite
+  shouldUseDirectBackgroundComposite,
+  inferLockMaskBox
 } = require('../src/server');
 const { JobStatus } = require('../src/jobs/status');
 const { ErrorCode } = require('../src/utils/errors');
@@ -393,6 +394,34 @@ const handleReferencePrompt = buildDoorImageInstruction({
 assert(handleReferencePrompt.includes('把手图含锁防污染规则'));
 assert(handleReferencePrompt.includes('这些都必须视为非把手干扰信息，不能被复制'));
 assert(handleReferencePrompt.includes('整门照中原本存在的智能锁/锁体/锁芯/猫眼/门铃位置'));
+
+const doubleDoorSingleLockFallback = inferLockMaskBox(
+  { width: 1000, height: 1000 },
+  Buffer.from('mock-lock'),
+  { doorType: '双开门', requirement: '安装一个智能锁' }
+);
+assert(doubleDoorSingleLockFallback);
+assert.strictEqual(doubleDoorSingleLockFallback.source, 'lock-right-leaf-heuristic');
+assert(doubleDoorSingleLockFallback.left >= 500, 'single smart lock fallback must stay on one leaf near seam');
+assert(doubleDoorSingleLockFallback.right <= 700, 'single smart lock fallback should not cover both handles');
+
+const doubleDoorLeftLockFallback = inferLockMaskBox(
+  { width: 1000, height: 1000 },
+  Buffer.from('mock-lock'),
+  { doorType: '双开门', requirement: '智能锁装到左门扇靠中缝' }
+);
+assert(doubleDoorLeftLockFallback);
+assert.strictEqual(doubleDoorLeftLockFallback.source, 'lock-left-leaf-heuristic');
+assert(doubleDoorLeftLockFallback.right <= 500, 'left smart lock fallback must stay on left leaf');
+
+const doubleDoorBothSideLockFallback = inferLockMaskBox(
+  { width: 1000, height: 1000 },
+  Buffer.from('mock-lock'),
+  { doorType: '双开门', requirement: '左右两侧都换双把手智能锁' }
+);
+assert(doubleDoorBothSideLockFallback);
+assert.strictEqual(doubleDoorBothSideLockFallback.source, 'lock-center-heuristic-explicit-both-sides');
+assert(doubleDoorBothSideLockFallback.left < 500 && doubleDoorBothSideLockFallback.right > 500);
 
 const partPromptSlotChecks = Object.freeze({
   'handle-detail': Object.freeze(['门把手：必须', '结构化需求确认：客户上传了门把手细节图']),

@@ -1767,23 +1767,50 @@ function inferHandleMaskBox(size, handleBuffer, job) {
   }, size, isDoubleDoor ? 'door-type-center-heuristic' : 'door-type-side-heuristic');
 }
 
+function getLockFallbackScope(job) {
+  const text = [
+    job && job.doorType,
+    job && job.requirement,
+    job && job.backgroundInfo,
+    job && job.style
+  ].map((item) => String(item || '')).join(' ');
+  const isMultiLeaf = /双开|子母|四开|六开/.test(text);
+  const wantsBothSides = /双锁|双把手|双拉手|左右都|两边都|两侧都|两扇都|全部五金|两侧五金|左右两侧/.test(text);
+  const side = /左侧|左边|左门|左扇|左开|左锁|左门扇/.test(text)
+    ? 'left'
+    : 'right';
+  return {
+    isMultiLeaf,
+    wantsBothSides,
+    side
+  };
+}
+
 function inferLockMaskBox(size, lockBuffer, job) {
   if (!size || !size.width || !size.height) {
     return null;
   }
-  const isDoubleDoor = /双开|子母|四开|六开/.test(job && job.doorType || '');
-  const boxWidthRatio = isDoubleDoor ? 0.28 : 0.22;
+  const lockScope = getLockFallbackScope(job);
+  const isDoubleDoor = lockScope.isMultiLeaf;
+  const shouldSpanCenter = isDoubleDoor && lockScope.wantsBothSides;
+  const boxWidthRatio = isDoubleDoor
+    ? (shouldSpanCenter ? 0.28 : 0.18)
+    : 0.22;
   const boxHeightRatio = lockBuffer && lockBuffer.length ? 0.42 : 0.34;
-  const boxWidth = Math.max(Math.round(size.width * boxWidthRatio), isDoubleDoor ? 220 : 160);
+  const boxWidth = Math.max(Math.round(size.width * boxWidthRatio), isDoubleDoor ? (shouldSpanCenter ? 220 : 170) : 160);
   const boxHeight = Math.max(Math.round(size.height * boxHeightRatio), 280);
-  const centerX = isDoubleDoor ? size.width * 0.5 : size.width * 0.72;
+  const centerX = isDoubleDoor
+    ? (shouldSpanCenter ? size.width * 0.5 : size.width * (lockScope.side === 'left' ? 0.41 : 0.59))
+    : size.width * 0.72;
   const centerY = size.height * 0.58;
   return normalizeMaskBox({
     left: centerX - (boxWidth / 2),
     top: centerY - (boxHeight / 2),
     right: centerX + (boxWidth / 2),
     bottom: centerY + (boxHeight / 2)
-  }, size, isDoubleDoor ? 'lock-center-heuristic' : 'lock-side-heuristic');
+  }, size, isDoubleDoor
+    ? (shouldSpanCenter ? 'lock-center-heuristic-explicit-both-sides' : `lock-${lockScope.side}-leaf-heuristic`)
+    : 'lock-side-heuristic');
 }
 
 function getDirectHandleTargetBox(size, job, maskBox) {
@@ -4233,5 +4260,6 @@ module.exports = {
   buildDoorImageInstruction,
   getPromptDecisionSummary,
   normalizeTaskType,
-  shouldUseDirectBackgroundComposite
+  shouldUseDirectBackgroundComposite,
+  inferLockMaskBox
 };
