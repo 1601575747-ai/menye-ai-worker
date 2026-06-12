@@ -677,6 +677,68 @@ assert(handleReferencePrompt.includes('把手图含锁防污染规则'));
 assert(handleReferencePrompt.includes('这些都必须视为非把手干扰信息，不能被复制'));
 assert(handleReferencePrompt.includes('整门照中原本存在的智能锁/锁体/锁芯/猫眼/门铃位置'));
 
+const handleWithIntegratedLockPrompt = buildDoorImageInstruction({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '双开门',
+  requirement: '智能锁和把手都按参考图处理',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'handle-detail', originalImageFileID: 'cloud://mock/handle.png' },
+    { slotId: 'lock-detail', originalImageFileID: 'cloud://mock/lock.png' }
+  ]
+}, null, {
+  color: '金色',
+  material: '金属',
+  finish: '亮面',
+  shape: '普通长拉手'
+}, [
+  { slotId: 'handle-detail', label: '门把手', color: '金色', material: '金属', shape: '普通长拉手', applyDescription: '替换普通把手' },
+  {
+    slotId: 'lock-detail',
+    label: '锁体/智能锁',
+    lockIntegrationType: 'handle-integrated',
+    referenceContainsHandle: true,
+    hasSmartLockPanel: true,
+    handleCount: 1,
+    applyDescription: '一体式智能锁把手整体替换'
+  }
+], null);
+assert(handleWithIntegratedLockPrompt.includes('同一安装区域以 lock-detail 一体式把手锁为准'));
+assert(handleWithIntegratedLockPrompt.includes('handle-detail 只可作用于未被智能锁占用的另一侧/非冲突把手'));
+assert(handleWithIntegratedLockPrompt.includes('不得覆盖、拆散或弱化一体式智能锁'));
+assert(handleWithIntegratedLockPrompt.includes('不得用 handle-detail 把一体式智能锁改回普通门把手'));
+assert(!handleWithIntegratedLockPrompt.includes('门把手：必须按门把手细节图融合/替换'));
+
+const handleWithStandaloneLockPrompt = buildDoorImageInstruction({
+  taskType: 'parts-compose',
+  templateType: '门部件拼接效果图',
+  doorType: '双开门',
+  requirement: '智能锁和把手都按参考图处理',
+  referenceImages: [
+    { slotId: 'full-door', originalImageFileID: 'cloud://mock/full-door.png' },
+    { slotId: 'handle-detail', originalImageFileID: 'cloud://mock/handle.png' },
+    { slotId: 'lock-detail', originalImageFileID: 'cloud://mock/lock.png' }
+  ]
+}, null, {
+  color: '金色',
+  material: '金属',
+  finish: '亮面',
+  shape: '普通长拉手'
+}, [
+  { slotId: 'handle-detail', label: '门把手', color: '金色', material: '金属', shape: '普通长拉手', applyDescription: '替换普通把手' },
+  {
+    slotId: 'lock-detail',
+    label: '锁体/智能锁',
+    lockIntegrationType: 'standalone',
+    hasSmartLockPanel: true,
+    applyDescription: '替换独立智能锁面板'
+  }
+], null);
+assert(handleWithStandaloneLockPrompt.includes('门把手：必须按门把手细节图融合/替换'));
+assert(handleWithStandaloneLockPrompt.includes('锁体/智能锁：必须按锁体/智能锁细节图处理锁具'));
+assert(!handleWithStandaloneLockPrompt.includes('不得用 handle-detail 把一体式智能锁改回普通门把手'));
+
 const doubleDoorSingleLockFallback = inferLockMaskBox(
   { width: 1000, height: 1000 },
   Buffer.from('mock-lock'),

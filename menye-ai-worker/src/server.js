@@ -2711,8 +2711,15 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
   const hasRightLeafDetail = referenceImages.some((item) => item.slotId === 'right-leaf-detail');
   const hasChildLeafDetail = referenceImages.some((item) => item.slotId === 'child-leaf-detail');
   const hasMiddleJoinDetail = referenceImages.some((item) => item.slotId === 'middle-join-detail');
+  const prePromptLockStyle = Array.isArray(referenceStyles)
+    ? referenceStyles.find((style) => style && style.slotId === 'lock-detail')
+    : null;
+  const prePromptLockReferenceIsHandleIntegrated = isHandleIntegratedLockStyle(prePromptLockStyle);
+  const handleDetailCompetesWithIntegratedLock = hasHandleDetail && hasLockDetail && prePromptLockReferenceIsHandleIntegrated;
   const backgroundHandlePolicyText = hasHandleDetail
-    ? '门把手按 handle-detail 参考图执行替换/融合，不能因为背景贴合而保留原把手不变'
+    ? (handleDetailCompetesWithIntegratedLock
+      ? '门把手按 handle-detail 参考图执行替换/融合，但如果与 lock-detail 一体式智能锁安装区冲突，同一安装区域以 lock-detail 一体式把手锁为准，handle-detail 只作用于未被智能锁占用的另一侧或非冲突把手'
+      : '门把手按 handle-detail 参考图执行替换/融合，不能因为背景贴合而保留原把手不变')
     : '门把手保持第一张整门图原样';
   const backgroundLockPolicyText = hasLockDetail
     ? '锁体/智能锁按 lock-detail 参考图执行替换/融合，不能因为背景贴合、颜色统一或白底任务而保留原锁不变'
@@ -2774,6 +2781,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
   const handleStyleInstruction = handleStyle && (handleStyle.color || handleStyle.material || handleStyle.finish || handleStyle.shape || handleStyle.base || handleStyle.details)
     ? [
         `系统识别到门把手细节特征：颜色=${handleStyle.color || '未识别'}；材质=${handleStyle.material || '未识别'}；表面质感=${handleStyle.finish || '未识别'}；主体造型=${handleStyle.shape || '未识别'}；底座/面板=${handleStyle.base || '未识别'}；关键细节=${handleStyle.details || '未识别'}。`,
+        handleDetailCompetesWithIntegratedLock
+          ? '同区优先级规则：本次同时上传了门把手细节图和把手一体式 lock-detail；如果两者争用同一安装区域，lock-detail 一体式智能锁整体优先，handle-detail 不得覆盖、拆散或弱化智能锁面板、指纹/密码区、应急小圆孔和一体式把手。'
+          : '',
         handleStyle.containsSmartLock || handleStyle.smartLockInterference
           ? `系统同时识别到门把手细节图中含有非把手锁体/智能锁干扰物：${handleStyle.smartLockInterference || '存在智能锁、锁面板或锁芯类部件'}。这些干扰物不能作为把手样式、底座或装饰细节迁移到整门图。`
           : '',
@@ -2859,9 +2869,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
     ? effectiveReferenceStyles.find((style) => style && style.slotId === 'edge-trim-detail')
     : null;
   const lockStyle = Array.isArray(referenceStyles)
-    ? referenceStyles.find((style) => style && style.slotId === 'lock-detail')
+    ? prePromptLockStyle
     : null;
-  const lockReferenceIsHandleIntegrated = isHandleIntegratedLockStyle(lockStyle);
+  const lockReferenceIsHandleIntegrated = prePromptLockReferenceIsHandleIntegrated;
   const colorSampleStyle = Array.isArray(referenceStyles)
     ? referenceStyles.find((style) => style && style.slotId === 'color-sample')
     : null;
@@ -2880,7 +2890,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
     ? '最高优先级限制：包边替换不是整门换款。包边任务只允许修改包边、门套线、收口条、压线和其极小衔接边缘；包边参考图默认只提供包边结构、宽窄、层次、线条和收边方式，包边颜色默认跟门扇/门体同色，并随颜色参考图一起统一；只有客户明确指定包边独立颜色、按包边参考图颜色，或要求包边颜色保持不变时，包边颜色才不跟门体同色。包边任务本身不得改变门扇主体造型、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯结构和五金把手；如果本次同时上传门板线条/造型或气窗参考图，对应目标区域只由对应参考图任务控制，不能由包边任务带动改变。严禁为了适配包边而重画门扇。'
     : '最高优先级限制：包边替换不是整门换款。只允许修改包边、门套线、收口条、压线和其极小衔接边缘；包边参考图默认只提供包边结构、宽窄、层次、线条和收边方式，包边颜色默认匹配第一张整门图的门体原始颜色；严禁把门扇/门体颜色改成包边参考图颜色。包边任务本身不得改变门扇主体、门板花纹、门板线条数量、线条位置、门型比例、玻璃、门芯造型、门面颜色和五金把手；如果本次同时上传门板线条/造型或气窗参考图，对应目标区域只由对应参考图任务控制，不能由包边任务带动改变。严禁为了适配包边而重画门扇。';
   const requiredReferenceTasks = [
-    hasHandleDetail ? '门把手：必须按门把手细节图融合/替换' : '',
+    hasHandleDetail ? (handleDetailCompetesWithIntegratedLock
+      ? '门把手：已上传门把手细节图；但 lock-detail 被识别为把手一体式智能锁时，同一安装区域以 lock-detail 一体式把手锁为准，handle-detail 只可作用于未被智能锁占用的另一侧/非冲突把手，不得覆盖、拆散或弱化一体式智能锁'
+      : '门把手：必须按门把手细节图融合/替换') : '',
     hasEdgeTrimDetail ? '包边：必须识别包边参考图中的包边结构并产生可见融合/替换效果，不能保留原包边不变' : '',
     hasLockDetail ? (lockReferenceIsHandleIntegrated
       ? `锁体/智能锁：必须按锁体/智能锁细节图替换为一体式把手锁整体，包含智能锁面板、指纹/密码/刷卡区和与其物理一体的把手；小圆孔是独立实体应急锁孔，不能放在把手或黑色智能面板上；${lockReferenceIsDoubleHandle ? '参考图是双把手，最终必须生成双把手，不能只生成单把手；' : ''}不能保留整门图里的原智能锁或原把手不变`
@@ -3167,7 +3179,9 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
       : '',
     hasLockDetail
       ? (lockReferenceIsHandleIntegrated
-        ? '冲突消解：锁体/智能锁参考图被识别为把手一体式智能锁时，只额外打开“一体式把手锁整体”变化权限；不允许因锁具参考图改变门扇颜色、门板线条、包边、玻璃或背景，也不允许删除未与智能锁安装区冲突的另一侧原把手。'
+        ? (handleDetailCompetesWithIntegratedLock
+          ? '冲突消解：同时上传 handle-detail 和把手一体式 lock-detail 时，同一安装区域以 lock-detail 一体式把手锁为准；handle-detail 只可作用于未被智能锁占用的另一侧/非冲突把手，不得覆盖、拆散或弱化一体式智能锁，不得把智能锁面板替换成普通把手。'
+          : '冲突消解：锁体/智能锁参考图被识别为把手一体式智能锁时，只额外打开“一体式把手锁整体”变化权限；不允许因锁具参考图改变门扇颜色、门板线条、包边、玻璃或背景，也不允许删除未与智能锁安装区冲突的另一侧原把手。')
         : '冲突消解：锁体/智能锁参考图只打开锁具五金局部变化权限，不允许因锁具参考图改变门扇颜色、门板线条、包边、玻璃、把手位置、把手款式或背景；参考图里的把手默认不迁移，未与锁体安装区冲突的原把手必须保留。')
       : '',
     hasBackgroundReference
@@ -3456,6 +3470,14 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
         ? (lockReferenceIsHandleIntegrated
           ? '当前没有单独上传门把手细节照，但已上传的锁体/智能锁参考图被识别为把手一体式智能锁；因此不能套用“保持现有门把手”的规则，必须把参考图中的一体式把手智能锁整体替换到整门图上。'
           : '当前没有门把手细节照，请保持整门图中的现有门把手，不要擅自改变门把手款式、颜色、材质或底座；本次应优先执行已上传参考图对应的包边、颜色、锁体、门板造型、气窗、门头/门柱、材质纹理或背景任务。')
+        : handleDetailCompetesWithIntegratedLock
+          ? [
+            '高优先级指令：本次同时上传了门把手细节图和把手一体式 lock-detail，二者不是互相覆盖关系，而是按安装区域分层执行。',
+            '同一安装区域内，lock-detail 一体式把手锁整体优先；必须保留并落图智能锁面板、指纹/密码/刷卡区、实体应急小圆孔和与其物理一体的把手。',
+            'handle-detail 只可作用于未被智能锁占用的另一侧把手、对侧拉手或非冲突把手区域；如果整门只有一个把手且该位置被一体式智能锁占用，则不要再强行套用 handle-detail 普通把手款式。',
+            '不得用 handle-detail 把一体式智能锁改回普通门把手，不得删除或遮挡智能锁核心特征，不得拆散智能锁面板和一体式把手。',
+            '除智能锁/把手冲突区域外，仍必须保留整门上下文图的门扇、门框、材质、颜色、纹理、漆面、表面工艺、光影和整体结构。'
+          ].join('\n')
         : [
           '高优先级指令：只要输入中包含门把手细节图，本次任务就默认必须执行“把该门把手融合到整门照中”的操作；这是强制目标，不需要等待客户额外说明。',
           '高优先级指令：整门上下文图是最终输出的唯一基底图，必须保留其门扇、门框、材质、颜色、纹理、漆面、表面工艺、光影和整体结构，不得重绘成其他材质或风格。',
