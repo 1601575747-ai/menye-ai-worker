@@ -194,8 +194,22 @@ function translatePoint(point, offset) {
   });
 }
 
+function translateBox(box, offset) {
+  if (!box) {
+    return null;
+  }
+  return Object.freeze({
+    left: box.left + offset.x,
+    top: box.top + offset.y,
+    right: box.right + offset.x,
+    bottom: box.bottom + offset.y
+  });
+}
+
 function translateRenderPlan(renderPlan, geometry) {
   const offset = geometry.imageOffset;
+  const originalMetadata = (renderPlan && renderPlan.metadata) || {};
+  const sourceContentBox = originalMetadata.contentBox || null;
   return Object.freeze({
     ...(renderPlan || {}),
     lines: Object.freeze((Array.isArray(renderPlan && renderPlan.lines) ? renderPlan.lines : []).map((line) => Object.freeze({
@@ -221,11 +235,13 @@ function translateRenderPlan(renderPlan, geometry) {
       position: translatePoint(annotation.position, offset)
     }))),
     metadata: Object.freeze({
-      ...((renderPlan && renderPlan.metadata) || {}),
+      ...originalMetadata,
       imageSize: Object.freeze(geometry.outputSize),
       sourceImageSize: Object.freeze(geometry.imageSize),
       imageOffset: Object.freeze(geometry.imageOffset),
-      padding: Object.freeze(geometry.padding)
+      padding: Object.freeze(geometry.padding),
+      sourceContentBox,
+      contentBox: translateBox(sourceContentBox, offset)
     })
   });
 }
@@ -314,6 +330,7 @@ async function renderDimensionAnnotation({ image, imageUrl, renderPlan, whiteBac
   if (resultBuffer) {
     return Object.freeze({
       resultBuffer,
+      renderPlan: translatedRenderPlan,
       rendererType: 'sharp-svg-overlay',
       metadata: Object.freeze({
         whiteBackground: !!whiteBackground,

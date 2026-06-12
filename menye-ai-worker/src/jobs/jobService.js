@@ -38,8 +38,21 @@ function normalizeTaskType(value) {
   return value || TaskType.DIMENSION_ANNOTATION;
 }
 
+function hasInputValues(source) {
+  if (Array.isArray(source)) {
+    return source.length > 0;
+  }
+  return !!(source && typeof source === 'object' && Object.keys(source).length > 0);
+}
+
 function pickInputs(payload = {}) {
-  return payload.inputs || payload.dimensionValues || payload.dimensions || payload.dimensionInputs || {};
+  const sources = [
+    payload.inputs,
+    payload.dimensionValues,
+    payload.dimensions,
+    payload.dimensionInputs
+  ];
+  return sources.find(hasInputValues) || {};
 }
 
 function pickImageRefs(payload = {}) {

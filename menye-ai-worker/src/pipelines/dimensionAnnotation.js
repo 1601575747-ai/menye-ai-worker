@@ -10,8 +10,21 @@ const { validateDimensionAnnotation } = require('../door/validators');
 const { JobStatus } = require('../jobs/status');
 const { ErrorCode } = require('../utils/errors');
 
+function hasInputValues(source) {
+  if (Array.isArray(source)) {
+    return source.length > 0;
+  }
+  return !!(source && typeof source === 'object' && Object.keys(source).length > 0);
+}
+
 function getJobInputs(job) {
-  return (job && (job.dimensionValues || job.dimensions || job.dimensionInputs)) || {};
+  const sources = [
+    job && job.inputs,
+    job && job.dimensionValues,
+    job && job.dimensions,
+    job && job.dimensionInputs
+  ];
+  return sources.find(hasInputValues) || {};
 }
 
 function normalizeViewSide(value) {
@@ -160,7 +173,7 @@ async function runDimensionAnnotationPipeline(job = {}) {
     });
   }
 
-  const renderPlan = buildDimensionRenderPlan({
+  const layoutPlan = buildDimensionRenderPlan({
     rules: ruleResult.rules,
     doorStructure,
     imageSize: normalizedJob.imageSize
@@ -169,9 +182,10 @@ async function runDimensionAnnotationPipeline(job = {}) {
   const renderResult = await renderDimensionAnnotation({
     image: normalizedJob.image,
     imageUrl: normalizedJob.imageUrl,
-    renderPlan,
+    renderPlan: layoutPlan,
     whiteBackground: normalizedJob.whiteBackground
   });
+  const renderPlan = renderResult.renderPlan || layoutPlan;
 
   const metadata = Object.freeze({
     doorType: normalizedJob.doorType,

@@ -1829,6 +1829,46 @@ assert(pipelineResult.metadata.rules.some((rule) => rule.field === 'openingWidth
 assert.strictEqual(pipelineResult.renderPlan.lines.length, 1);
 assert.strictEqual(pipelineResult.renderPlan.textOnlyAnnotations.length, 1);
 assert(['frontend-render-plan', 'sharp-svg-overlay'].includes(pipelineResult.rendererType));
+assert(pipelineResult.renderPlan.metadata.sourceImageSize);
+assert(pipelineResult.renderPlan.metadata.sourceContentBox);
+assert(pipelineResult.renderPlan.metadata.contentBox.left >= pipelineResult.renderPlan.metadata.imageOffset.x);
+
+const inputsCompatPipelineResult = await runDimensionAnnotationPipeline({
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  doorType: '单开门',
+  dimensionViewSide: 'front',
+  inputs: {
+    openingWidth: '980',
+    visibleOpeningWidth: '900'
+  },
+  imageSize,
+  analyzerMode: 'mock'
+});
+assert.strictEqual(inputsCompatPipelineResult.status, JobStatus.SUCCEEDED);
+assert.deepStrictEqual(
+  inputsCompatPipelineResult.metadata.rules.map((rule) => rule.field).sort(),
+  ['openingWidth', 'visibleOpeningWidth'].sort()
+);
+const compatOpeningWidthRule = inputsCompatPipelineResult.metadata.rules
+  .find((rule) => rule.field === 'openingWidth');
+assert.strictEqual(compatOpeningWidthRule.sourceBoundary.boundaryMode, 'edgeTrimMidline');
+for (const line of inputsCompatPipelineResult.renderPlan.lines) {
+  assert(line.from.x >= 0 && line.from.y >= 0 && line.to.x >= 0 && line.to.y >= 0);
+}
+
+const legacyDimensionPromptFromInputs = buildDoorImageInstruction({
+  taskType: TaskType.DIMENSION_ANNOTATION,
+  doorType: '单开门',
+  dimensionViewSide: 'front',
+  inputs: {
+    openingWidth: '980',
+    visibleOpeningWidth: '900'
+  }
+}, null, null, [], null);
+assert(legacyDimensionPromptFromInputs.includes('客户已选择/填写的尺寸项'));
+assert(legacyDimensionPromptFromInputs.includes('门洞宽：980mm'));
+assert(legacyDimensionPromptFromInputs.includes('见光宽：900mm'));
+assert(legacyDimensionPromptFromInputs.includes('门洞尺寸取包边厚度中线'));
 
 const mixedVisibilityPipelineResult = await runDimensionAnnotationPipeline({
   taskType: TaskType.DIMENSION_ANNOTATION,
@@ -1857,7 +1897,8 @@ const whiteBackgroundCompatJob = createJob({
   taskType: TaskType.DIMENSION_ANNOTATION,
   doorType: '单开门',
   viewSide: 'front',
-  inputs: {
+  inputs: {},
+  dimensionInputs: {
     openingWidth: '980'
   },
   imageUrl: 'mock://door.png',
