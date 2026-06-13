@@ -4375,8 +4375,12 @@ function getPublicWorkerErrorMessage(error) {
 }
 
 function shouldCleanupLegacyDoorHoleMarks(job) {
-  const hasLockDetail = getReferenceImages(job).some((item) => item && item.slotId === 'lock-detail');
+  const referenceImages = getReferenceImages(job);
+  const hasLockDetail = referenceImages.some((item) => item && item.slotId === 'lock-detail');
   if (!hasLockDetail) {
+    return false;
+  }
+  if (referenceImages.some((item) => item && item.slotId === 'background-reference')) {
     return false;
   }
   const text = `${job && job.doorType ? job.doorType : ''} ${getJobRequirementText(job)}`;
