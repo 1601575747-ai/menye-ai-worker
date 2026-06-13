@@ -122,6 +122,69 @@ function normalizeTaskType(job) {
   return '';
 }
 
+function stringifyRequirementValue(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(stringifyRequirementValue).filter(Boolean).join(' ');
+  }
+  if (typeof value === 'object') {
+    const preferredKeys = [
+      'doorType',
+      'viewSide',
+      'style',
+      'backgroundInfo',
+      'extraRequirements',
+      'requirement',
+      'requirements',
+      'description',
+      'text'
+    ];
+    const parts = [];
+    for (const key of preferredKeys) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        const text = stringifyRequirementValue(value[key]);
+        if (text) {
+          parts.push(text);
+        }
+      }
+    }
+    for (const [key, item] of Object.entries(value)) {
+      if (preferredKeys.includes(key)) {
+        continue;
+      }
+      const text = stringifyRequirementValue(item);
+      if (text) {
+        parts.push(text);
+      }
+    }
+    return parts.join(' ');
+  }
+  return String(value || '');
+}
+
+function getJobRequirementText(job) {
+  if (!job) {
+    return '';
+  }
+  return [
+    stringifyRequirementValue(job.requirement),
+    stringifyRequirementValue(job.extraRequirements),
+    stringifyRequirementValue(job.style),
+    stringifyRequirementValue(job.backgroundInfo),
+    stringifyRequirementValue(job.doorType)
+  ].filter(Boolean).join(' ').trim();
+}
+
+function doesRequirementPreserveHandles(job) {
+  const requirementText = getJobRequirementText(job);
+  return /(?:保留|保持|不要改|不改|别改|不能改|不动|原样|维持|锁定)[^。；，,.]{0,18}(?:把手|门把手|拉手|双拉手|双把手)|(?:把手|门把手|拉手|双拉手|双把手)[^。；，,.]{0,18}(?:保留|保持|不要改|不改|别改|不能改|不动|原样|维持|锁定)/.test(requirementText);
+}
+
 const DIMENSION_DOOR_TYPES = [
   '单开门',
   '双开门',
@@ -246,7 +309,7 @@ function buildDimensionAnnotationData(job) {
     }))
     .filter((field) => field.valueText || selectedSet.has(field.key));
   const providedKeys = new Set(provided.map((field) => field.key));
-  const requirementText = job && job.requirement ? String(job.requirement) : '';
+  const requirementText = getJobRequirementText(job);
   const hasDoorOpeningRequest = providedKeys.has('openingWidth') ||
     providedKeys.has('openingHeight') ||
     /门洞/.test(requirementText);
@@ -395,11 +458,7 @@ function hasNonBackgroundReferenceImage(job) {
 }
 
 function hasDoorEditTextRequest(job) {
-  const text = [
-    job && job.requirement,
-    job && job.backgroundInfo,
-    job && job.style
-  ].map((item) => String(item || '')).join(' ');
+  const text = getJobRequirementText(job);
   if (!text.trim()) {
     return false;
   }
@@ -470,7 +529,7 @@ function getDetectableReferenceSlotIds() {
 }
 
 function getPromptDecisionSummary(job) {
-  const requirementText = job && job.requirement ? String(job.requirement) : '';
+  const requirementText = getJobRequirementText(job);
   const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
   const referenceImages = getReferenceImages(job);
   const hasUploadedEdgeTrimDetail = referenceImages.some((item) => item && item.slotId === 'edge-trim-detail');
@@ -580,10 +639,7 @@ function looksLikeColorName(value) {
 }
 
 function getColorRequestText(job) {
-  return [
-    job && job.requirement,
-    job && job.style
-  ].filter(Boolean).join(' ');
+  return getJobRequirementText(job);
 }
 
 function extractNamedColorTargetFromText(text) {
@@ -1835,9 +1891,7 @@ function inferHandleMaskBox(size, handleBuffer, job) {
 function getLockFallbackScope(job, lockStyle) {
   const text = [
     job && job.doorType,
-    job && job.requirement,
-    job && job.backgroundInfo,
-    job && job.style,
+    getJobRequirementText(job),
     lockStyle && lockStyle.lockIntegrationType,
     lockStyle && lockStyle.shape,
     lockStyle && lockStyle.structure,
@@ -2709,7 +2763,7 @@ function buildDimensionBoxInstruction(dimensionBoxes) {
 }
 
 function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, dimensionBoxes) {
-  const requirementText = job && job.requirement ? String(job.requirement) : '';
+  const requirementText = getJobRequirementText(job);
   const backgroundInfo = job && job.backgroundInfo ? String(job.backgroundInfo).trim() : '';
   const doorType = job && job.doorType ? String(job.doorType) : '';
   const taskType = normalizeTaskType(job);
@@ -2722,7 +2776,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
   const allowHandleColorChange = /把手.*颜色|颜色.*把手|门把手.*颜色|颜色.*门把手|调成门的颜色|改成门的颜色|同门颜色|跟门同色|与门同色/.test(requirementText);
   const allowHandleStyleChange = /更换把手|更改把手样式|改变把手样式|换个把手|把手款式|把手造型|把手结构/.test(requirementText);
   const allowHandleBaseChange = /去掉底座|删除底座|取消底座|不要底座|只保留把手主体|弱化底座|缩小底座/.test(requirementText);
-  const userExplicitlyPreservesHandles = /(?:保留|保持|不要改|不改|别改|不能改|不动|原样|维持|锁定)[^。；，,.]{0,18}(?:把手|门把手|拉手|双拉手|双把手)|(?:把手|门把手|拉手|双拉手|双把手)[^。；，,.]{0,18}(?:保留|保持|不要改|不改|别改|不能改|不动|原样|维持|锁定)/.test(requirementText);
+  const userExplicitlyPreservesHandles = doesRequirementPreserveHandles(job);
   const userWantsEdgeTrimDoorColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:同门|跟门|与门|和门|门体|门扇|整门)[^。；，,.]{0,24}(?:同色|一样|一致|统一)|(?:门体|门扇|整门)[^。；，,.]{0,24}(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:同色|一样|一致|统一)/.test(requirementText);
   const userSpecifiedEdgeTrimColor = /(?:包边|门套|收口|压线)[^。；，,.]{0,24}(?:改成|换成|调成|做成|改为|设为|使用|用)[^。；，,.]{0,24}(?:颜色|色|黑|白|灰|棕|木|金|银|红|黄|蓝|绿|深|浅)|(?:黑色|白色|灰色|棕色|木色|金色|银色|深色|浅色)[^。；，,.]{0,24}(?:包边|门套|收口|压线)/.test(requirementText);
   const userWantsEdgeTrimReferenceColor = userSelectedEdgeTrimReferenceColor || /(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:按|跟随|参考|保留|保持|使用|用)[^。；，,.]{0,28}(?:包边参考图|参考图|原图)[^。；，,.]{0,16}(?:颜色|色|固有色)|(?:包边|门套|收口|压线)[^。；，,.]{0,28}(?:不要|不跟|不同|独立|单独|另外|另做)[^。；，,.]{0,28}(?:同门|跟门|门体|门扇|整门|同色|统一|颜色|色)/.test(requirementText);
@@ -2884,6 +2938,7 @@ function buildDoorImageInstruction(job, maskBox, handleStyle, referenceStyles, d
         '智能锁强制落图规则：只要上传了 lock-detail 锁体/智能锁细节图，本次就必须把该参考图中的智能锁核心可见部件 P 到整门图上，不能只保留原门拉手或原锁具。',
         '智能锁核心可见部件包括：黑色/金属锁面板、密码键盘、指纹识别区、刷卡区、摄像头、猫眼、门铃、锁芯孔、实体应急小圆孔、屏幕、指示灯和必要安装底座；参考图里能看到哪些，最终图中就应尽量出现对应哪些。',
         '旧五金清理规则：新智能锁落图后，同一开启扇、同一五金安装带内的旧锁面板、旧钥匙孔、旧应急孔、旧小圆孔、旧门铃/猫眼和旧把手底座残留必须被覆盖或清理；除非客户明确要求保留某个旧猫眼/门铃/锁孔，最终不能同时出现一组新智能锁和多组旧锁孔/旧小面板叠加。',
+        '旧锁替换完整性规则：如果客户文字包含“旧锁”“旧把手”“替换成智能锁”或类似要求，第一张整门图中原锁具竖向安装带上的小方块、小黑面板、旧圆孔、旧锁芯、旧把手和旧底座都属于旧五金残留，必须被新智能锁或同色门面修复覆盖；不要在新智能锁上方或旁边留下独立旧小方块/旧小圆孔/旧小面板。',
         userExplicitlyPreservesHandles
           ? '客户明确要求保留把手/拉手：即使 lock-detail 被识别为把手一体式智能锁，也不得迁移参考图中的把手本体；只能把智能锁面板、密码/指纹/刷卡区、锁芯孔、小圆孔和必要底座作为独立锁具元素融合到原把手旁边或原锁具位置，并完整保留原把手/双拉手的长度、位置、数量和形状。'
           : '',
@@ -3723,7 +3778,7 @@ function normalizeDimensionWhiteBackground(job) {
     return job.dimensionWhiteBackground;
   }
   const backgroundInfo = String(job && job.backgroundInfo ? job.backgroundInfo : '');
-  const requirement = String(job && job.requirement ? job.requirement : '');
+  const requirement = getJobRequirementText(job);
   return /白板|白底|纯白|改白/.test(`${backgroundInfo} ${requirement}`);
 }
 
