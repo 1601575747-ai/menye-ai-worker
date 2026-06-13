@@ -4380,9 +4380,6 @@ function shouldCleanupLegacyDoorHoleMarks(job) {
   if (!hasLockDetail) {
     return false;
   }
-  if (referenceImages.some((item) => item && item.slotId === 'background-reference')) {
-    return false;
-  }
   const text = `${job && job.doorType ? job.doorType : ''} ${getJobRequirementText(job)}`;
   if (/双开|子母|四开|六开/.test(text)) {
     return false;
@@ -4393,9 +4390,10 @@ function shouldCleanupLegacyDoorHoleMarks(job) {
   return /旧锁|旧把手|替换成|换成|智能锁|锁体|锁孔|旧五金/.test(text);
 }
 
-function findLegacyDoorHoleMarkBoxes(raw, width, height) {
-  const startX = Math.round(width * 0.24);
-  const endX = Math.round(width * 0.74);
+function findLegacyDoorHoleMarkBoxes(raw, width, height, options) {
+  const hasBackgroundReference = !!(options && options.hasBackgroundReference);
+  const startX = Math.round(width * (hasBackgroundReference ? 0.52 : 0.24));
+  const endX = Math.round(width * (hasBackgroundReference ? 0.96 : 0.74));
   const startY = Math.round(height * 0.18);
   const endY = Math.round(height * 0.37);
   const visited = new Uint8Array(width * height);
@@ -4495,15 +4493,39 @@ function findLegacyDoorHoleMarkBoxes(raw, width, height) {
     .slice(0, 3);
 }
 
+async function buildFeatheredPatch(patchBuffer, width, height) {
+  const { data, info } = await sharp(patchBuffer)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const feather = Math.max(3, Math.round(Math.min(width, height) * 0.22));
+  for (let y = 0; y < info.height; y += 1) {
+    for (let x = 0; x < info.width; x += 1) {
+      const edgeDistance = Math.min(x, y, info.width - 1 - x, info.height - 1 - y);
+      const alphaScale = Math.max(0, Math.min(1, edgeDistance / feather));
+      const alphaIndex = ((y * info.width + x) * 4) + 3;
+      data[alphaIndex] = Math.round(data[alphaIndex] * alphaScale);
+    }
+  }
+  return sharp(data, {
+    raw: {
+      width: info.width,
+      height: info.height,
+      channels: 4
+    }
+  }).png().toBuffer();
+}
+
 async function cleanupLegacyDoorHoleMarks(resultBuffer, job) {
   if (!sharp || !resultBuffer || !shouldCleanupLegacyDoorHoleMarks(job)) {
     return resultBuffer;
   }
+  const hasBackgroundReference = getReferenceImages(job).some((item) => item && item.slotId === 'background-reference');
   const { data, info } = await sharp(resultBuffer)
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
-  const boxes = findLegacyDoorHoleMarkBoxes(data, info.width, info.height);
+  const boxes = findLegacyDoorHoleMarkBoxes(data, info.width, info.height, { hasBackgroundReference });
   if (!boxes.length) {
     return resultBuffer;
   }
@@ -4517,7 +4539,7 @@ async function cleanupLegacyDoorHoleMarks(resultBuffer, job) {
     if (sourceLeft === box.left) {
       continue;
     }
-    const patch = await sharp(resultBuffer)
+    const patchBuffer = await sharp(resultBuffer)
       .extract({
         left: sourceLeft,
         top: box.top,
@@ -4525,6 +4547,7 @@ async function cleanupLegacyDoorHoleMarks(resultBuffer, job) {
         height: box.height
       })
       .toBuffer();
+    const patch = await buildFeatheredPatch(patchBuffer, box.width, box.height);
     composites.push({
       input: patch,
       left: box.left,
