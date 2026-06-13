@@ -8,8 +8,9 @@
     "validate:domain": "node scripts/validate-domain.js",
     "validate:lock-prompts": "node scripts/validate-lock-prompts.js",
     "validate:lock-round-hole-inspector": "node scripts/validate-lock-round-hole-inspector.js",
-    "validate:worker-local": "node --check src/server.js && node --check scripts/validate-lock-prompts.js && node --check scripts/inspect-lock-round-holes.js && node --check scripts/validate-lock-round-hole-inspector.js && npm run validate:domain && npm run validate:lock-prompts && npm run validate:lock-round-hole-inspector && git diff --check",
-    "inspect:lock-round-holes": "node scripts/inspect-lock-round-holes.js"
+    "validate:worker-local": "node --check src/server.js && node --check scripts/validate-lock-prompts.js && node --check scripts/inspect-lock-round-holes.js && node --check scripts/validate-lock-round-hole-inspector.js && node --check scripts/verify-deployed-lock-round-hole.js && npm run validate:domain && npm run validate:lock-prompts && npm run validate:lock-round-hole-inspector && git diff --check",
+    "inspect:lock-round-holes": "node scripts/inspect-lock-round-holes.js",
+    "verify:deployed-lock-round-hole": "node scripts/verify-deployed-lock-round-hole.js"
   },
   "dependencies": {
     "@cloudbase/node-sdk": "latest",
