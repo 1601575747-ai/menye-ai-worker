@@ -4374,6 +4374,178 @@ function getPublicWorkerErrorMessage(error) {
   return message || '处理失败，请稍后再试';
 }
 
+function shouldCleanupLegacyDoorHoleMarks(job) {
+  const hasLockDetail = getReferenceImages(job).some((item) => item && item.slotId === 'lock-detail');
+  if (!hasLockDetail) {
+    return false;
+  }
+  const text = `${job && job.doorType ? job.doorType : ''} ${getJobRequirementText(job)}`;
+  if (/双开|子母|四开|六开/.test(text)) {
+    return false;
+  }
+  if (/(?:保留|保持|不要删|别删|不删|不要去掉|别去掉)[^。；，,.]{0,18}(?:猫眼|门铃|旧孔|旧圆孔|小圆孔|锁孔|旧锁孔)|(?:猫眼|门铃|旧孔|旧圆孔|小圆孔|锁孔|旧锁孔)[^。；，,.]{0,18}(?:保留|保持|不要删|别删|不删|不要去掉|别去掉)/.test(text)) {
+    return false;
+  }
+  return /旧锁|旧把手|替换成|换成|智能锁|锁体|锁孔|旧五金/.test(text);
+}
+
+function findLegacyDoorHoleMarkBoxes(raw, width, height) {
+  const startX = Math.round(width * 0.24);
+  const endX = Math.round(width * 0.74);
+  const startY = Math.round(height * 0.18);
+  const endY = Math.round(height * 0.37);
+  const visited = new Uint8Array(width * height);
+  const candidates = [];
+
+  function isDarkPixel(x, y) {
+    if (x < startX || x >= endX || y < startY || y >= endY) {
+      return false;
+    }
+    const index = (y * width + x) * 4;
+    if (raw[index + 3] < 16) {
+      return false;
+    }
+    const r = raw[index];
+    const g = raw[index + 1];
+    const b = raw[index + 2];
+    const luma = (0.299 * r) + (0.587 * g) + (0.114 * b);
+    return luma < 82 && Math.max(r, g, b) - Math.min(r, g, b) < 90;
+  }
+
+  for (let y = startY; y < endY; y += 1) {
+    for (let x = startX; x < endX; x += 1) {
+      const offset = y * width + x;
+      if (visited[offset] || !isDarkPixel(x, y)) {
+        visited[offset] = 1;
+        continue;
+      }
+      const stack = [[x, y]];
+      visited[offset] = 1;
+      let area = 0;
+      let minX = x;
+      let maxX = x;
+      let minY = y;
+      let maxY = y;
+      let sumLuma = 0;
+      while (stack.length) {
+        const [cx, cy] = stack.pop();
+        area += 1;
+        minX = Math.min(minX, cx);
+        maxX = Math.max(maxX, cx);
+        minY = Math.min(minY, cy);
+        maxY = Math.max(maxY, cy);
+        const pixelIndex = (cy * width + cx) * 4;
+        sumLuma += (0.299 * raw[pixelIndex]) + (0.587 * raw[pixelIndex + 1]) + (0.114 * raw[pixelIndex + 2]);
+        const neighbors = [
+          [cx + 1, cy],
+          [cx - 1, cy],
+          [cx, cy + 1],
+          [cx, cy - 1]
+        ];
+        for (const [nx, ny] of neighbors) {
+          if (nx < startX || nx >= endX || ny < startY || ny >= endY) {
+            continue;
+          }
+          const neighborOffset = ny * width + nx;
+          if (visited[neighborOffset]) {
+            continue;
+          }
+          visited[neighborOffset] = 1;
+          if (isDarkPixel(nx, ny)) {
+            stack.push([nx, ny]);
+          }
+        }
+      }
+      const boxWidth = maxX - minX + 1;
+      const boxHeight = maxY - minY + 1;
+      const aspect = boxWidth / Math.max(1, boxHeight);
+      const density = area / Math.max(1, boxWidth * boxHeight);
+      if (
+        area >= 18 &&
+        area <= 900 &&
+        boxWidth >= 5 &&
+        boxWidth <= Math.round(width * 0.045) &&
+        boxHeight >= 5 &&
+        boxHeight <= Math.round(height * 0.045) &&
+        aspect >= 0.45 &&
+        aspect <= 2.2 &&
+        density >= 0.18
+      ) {
+        const pad = Math.max(6, Math.round(Math.max(boxWidth, boxHeight) * 0.45));
+        const left = Math.max(0, minX - pad);
+        const top = Math.max(0, minY - pad);
+        candidates.push({
+          left,
+          top,
+          width: Math.min(width - left, boxWidth + (pad * 2)),
+          height: Math.min(height - top, boxHeight + (pad * 2)),
+          area,
+          darkness: 255 - (sumLuma / Math.max(1, area))
+        });
+      }
+    }
+  }
+
+  return candidates
+    .sort((a, b) => (b.darkness * b.area) - (a.darkness * a.area))
+    .slice(0, 3);
+}
+
+async function cleanupLegacyDoorHoleMarks(resultBuffer, job) {
+  if (!sharp || !resultBuffer || !shouldCleanupLegacyDoorHoleMarks(job)) {
+    return resultBuffer;
+  }
+  const { data, info } = await sharp(resultBuffer)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const boxes = findLegacyDoorHoleMarkBoxes(data, info.width, info.height);
+  if (!boxes.length) {
+    return resultBuffer;
+  }
+  const composites = [];
+  for (const box of boxes) {
+    const gap = Math.max(8, box.width);
+    const sourceLeftCandidate = box.left + box.width + gap;
+    const sourceLeft = sourceLeftCandidate + box.width < info.width
+      ? sourceLeftCandidate
+      : Math.max(0, box.left - box.width - gap);
+    if (sourceLeft === box.left) {
+      continue;
+    }
+    const patch = await sharp(resultBuffer)
+      .extract({
+        left: sourceLeft,
+        top: box.top,
+        width: box.width,
+        height: box.height
+      })
+      .toBuffer();
+    composites.push({
+      input: patch,
+      left: box.left,
+      top: box.top
+    });
+  }
+  if (!composites.length) {
+    return resultBuffer;
+  }
+  console.log('[worker] cleanup legacy door hole marks', {
+    jobId: job && (job._id || job.jobId),
+    boxes: boxes.map((box) => ({
+      left: box.left,
+      top: box.top,
+      right: box.left + box.width,
+      bottom: box.top + box.height,
+      area: box.area
+    }))
+  });
+  return sharp(resultBuffer)
+    .composite(composites)
+    .png()
+    .toBuffer();
+}
+
 async function requestEditedImage(jobId, inputImages, prompt, options) {
   const requestOptions = options || {};
   const modelCandidates = getImageModelCandidatesForInput(inputImages);
@@ -4567,6 +4739,7 @@ async function processJob(jobId) {
       }
     }
   }
+  resultBuffer = await cleanupLegacyDoorHoleMarks(resultBuffer, job);
   const resultImageFileID = await uploadResult(jobId, job.version || 1, resultBuffer);
   console.log('[worker] uploaded result image', jobId, resultImageFileID);
   const time = Date.now();
