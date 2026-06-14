@@ -327,6 +327,79 @@ function buildDimensionAnnotationData(job) {
   };
 }
 
+function serializeWorkerError(error) {
+  if (!error) {
+    return null;
+  }
+  return {
+    name: error.name || 'Error',
+    message: error.message ? String(error.message) : String(error),
+    code: error.code || ''
+  };
+}
+
+function buildDimensionDebugArtifact({ job, imageSize, dimensionData, dimensionBoxes, error, startedAt, completedAt }) {
+  const boxes = dimensionBoxes || null;
+  return {
+    schemaVersion: 1,
+    taskType: normalizeTaskType(job),
+    detector: 'openai-vision-dimension-boxes',
+    status: error ? 'failed' : (boxes ? 'succeeded' : 'empty'),
+    imageSize: imageSize ? {
+      width: imageSize.width || null,
+      height: imageSize.height || null
+    } : null,
+    inputContext: dimensionData ? {
+      doorType: dimensionData.doorType,
+      viewSide: dimensionData.viewSide,
+      viewSideLabel: dimensionData.viewSideLabel,
+      hasDoorOpeningRequest: !!dimensionData.hasDoorOpeningRequest,
+      hasVisibleOpeningRequest: !!dimensionData.hasVisibleOpeningRequest,
+      requestedFields: dimensionData.provided.map((field) => ({
+        key: field.key,
+        label: field.label,
+        valueText: field.valueText || '',
+        unit: field.unit || 'mm'
+      })),
+      whiteBackground: normalizeDimensionWhiteBackground(job)
+    } : null,
+    dimensionBoxes: boxes,
+    anchors: boxes ? {
+      outerTrimBox: boxes.outerTrimBox || null,
+      doorTrimConnectionBox: boxes.doorTrimConnectionBox || null,
+      openingMidlineBox: boxes.openingMidlineBox || null,
+      visibleOpeningBox: boxes.visibleOpeningBox || null,
+      headerOuterBox: boxes.headerOuterBox || null
+    } : null,
+    keypoints: boxes ? {
+      transomTopY: boxes.transomTopY === undefined ? null : boxes.transomTopY,
+      doorBottomY: boxes.doorBottomY === undefined ? null : boxes.doorBottomY
+    } : null,
+    modes: boxes ? {
+      heightBottomMode: boxes.heightBottomMode || 'shared'
+    } : null,
+    confidence: boxes ? (boxes.confidence || '') : '',
+    notes: boxes ? (boxes.notes || '') : '',
+    bottomNotes: boxes ? (boxes.bottomNotes || '') : '',
+    error: serializeWorkerError(error),
+    timestamps: {
+      startedAt: startedAt || null,
+      completedAt: completedAt || null,
+      durationMs: startedAt && completedAt ? completedAt - startedAt : null
+    }
+  };
+}
+
+function mergeWorkerArtifacts(job, patch) {
+  const current = job && job.workerArtifacts && typeof job.workerArtifacts === 'object'
+    ? job.workerArtifacts
+    : {};
+  return {
+    ...current,
+    ...patch
+  };
+}
+
 function getVisionResponseRequest(input) {
   const request = {
     model: OPENAI_VISION_MODEL,
@@ -2546,11 +2619,11 @@ function normalizeDimensionBoxes(parsed, size, dimensionData) {
   return applyDimensionBoundaryRequestRules(result, dimensionData, size);
 }
 
-async function detectDimensionBoxes(primaryBuffer, primaryFileID, size, job) {
+async function detectDimensionBoxes(primaryBuffer, primaryFileID, size, job, dimensionData) {
   if (!primaryBuffer || !size || !size.width || !size.height) {
     return null;
   }
-  const dimensionData = buildDimensionAnnotationData(job);
+  dimensionData = dimensionData || buildDimensionAnnotationData(job);
   const requestedText = dimensionData.provided.length
     ? dimensionData.provided.map((field) => field.label).join('、')
     : '未填写结构化尺寸项';
@@ -3739,6 +3812,30 @@ async function updateJob(jobId, data) {
   );
 }
 
+async function persistDimensionDebugArtifact(jobId, job, dimensionDebug) {
+  if (!dimensionDebug) {
+    return;
+  }
+  try {
+    await updateJob(jobId, {
+      workerArtifacts: mergeWorkerArtifacts(job, {
+        dimensionDebug
+      }),
+      updatedAt: Date.now()
+    });
+    console.log('[worker] persisted dimension debug artifact', {
+      jobId,
+      status: dimensionDebug.status,
+      confidence: dimensionDebug.confidence || ''
+    });
+  } catch (error) {
+    console.warn('[worker] persist dimension debug artifact failed', {
+      jobId,
+      message: error && error.message ? error.message : error
+    });
+  }
+}
+
 async function downloadOriginalImage(fileID) {
   const result = await withTimeout(
     app.downloadFile({
@@ -3952,6 +4049,7 @@ async function buildEditArtifacts(job) {
   let directCompositeBuffer = null;
   let directCompositePlacement = null;
   let dimensionBoxes = null;
+  let dimensionDebug = null;
   let preDetectedLockStyle = null;
   const referenceStyles = [];
   const detectableReferenceSlotIds = getDetectableReferenceSlotIds();
@@ -3964,14 +4062,34 @@ async function buildEditArtifacts(job) {
   const shouldBuildLockMask = !handleDetail && !!lockDetail && !backgroundReference &&
     effectiveDetailReferences.length === 1 && effectiveDetailReferences[0].slotId === 'lock-detail';
   if (normalizeTaskType(job) === 'dimension-annotation') {
+    const dimensionData = buildDimensionAnnotationData(job);
+    const dimensionStartedAt = Date.now();
     try {
       dimensionBoxes = await detectDimensionBoxes(
         primaryBuffer,
         primaryImage.originalImageFileID,
         primarySize,
-        job
+        job,
+        dimensionData
       );
+      dimensionDebug = buildDimensionDebugArtifact({
+        job,
+        imageSize: primarySize,
+        dimensionData,
+        dimensionBoxes,
+        startedAt: dimensionStartedAt,
+        completedAt: Date.now()
+      });
     } catch (error) {
+      dimensionDebug = buildDimensionDebugArtifact({
+        job,
+        imageSize: primarySize,
+        dimensionData,
+        dimensionBoxes: null,
+        error,
+        startedAt: dimensionStartedAt,
+        completedAt: Date.now()
+      });
       console.warn('[worker] vision dimension boundary detection failed', {
         jobId: job._id || job.jobId,
         message: error && error.message ? error.message : error
@@ -4223,7 +4341,8 @@ async function buildEditArtifacts(job) {
     } : null,
     handleStyle,
     referenceStyles,
-    dimensionBoxes
+    dimensionBoxes,
+    dimensionDebug
   });
 
   return {
@@ -4240,6 +4359,7 @@ async function buildEditArtifacts(job) {
     referenceBuffers,
     handleStyle,
     referenceStyles,
+    dimensionDebug,
     dimensionBoxes,
     directCompositeBuffer,
     directCompositePlacement
@@ -4686,6 +4806,9 @@ async function processJob(jobId) {
   console.log('[worker] updated job to processing', jobId);
 
   const editArtifacts = await buildEditArtifacts(job);
+  if (normalizeTaskType(job) === 'dimension-annotation') {
+    await persistDimensionDebugArtifact(jobId, job, editArtifacts.dimensionDebug);
+  }
   console.log('[worker] prepared input images', jobId, {
     imageCount: editArtifacts.inputImages.length,
     hasMask: !!editArtifacts.maskFile,
