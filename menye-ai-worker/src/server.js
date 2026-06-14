@@ -390,6 +390,70 @@ function buildDimensionDebugArtifact({ job, imageSize, dimensionData, dimensionB
   };
 }
 
+function buildStructuredDimensionDebugArtifact({ job, structuredResult, error }) {
+  const metadata = structuredResult && structuredResult.metadata ? structuredResult.metadata : {};
+  const doorStructure = metadata.doorStructure || {};
+  const rules = Array.isArray(metadata.rules) ? metadata.rules : [];
+  const renderMetadata = metadata.renderMetadata || null;
+  const events = Array.isArray(metadata.events) ? metadata.events : [];
+  const firstEvent = events[0] || null;
+  const lastEvent = events.length ? events[events.length - 1] : null;
+  const sourceSize = renderMetadata && renderMetadata.sourceImageSize
+    ? renderMetadata.sourceImageSize
+    : null;
+  return {
+    schemaVersion: 1,
+    taskType: normalizeTaskType(job),
+    detector: 'structured-dimension-pipeline',
+    status: structuredResult && structuredResult.status ? structuredResult.status : (error ? 'failed' : 'unknown'),
+    structuredPipelineJobId: structuredResult && structuredResult.jobId ? structuredResult.jobId : '',
+    imageSize: sourceSize ? {
+      width: sourceSize.width || null,
+      height: sourceSize.height || null
+    } : null,
+    inputContext: {
+      doorType: metadata.doorType || normalizeDimensionDoorType(job && job.doorType),
+      viewSide: metadata.viewSide || ((job && job.dimensionViewSide) || 'front'),
+      viewSideLabel: (metadata.viewSide || (job && job.dimensionViewSide)) === 'back' ? '背面图' : '正面图',
+      hasDoorOpeningRequest: rules.some((rule) => rule && /^opening/.test(rule.field || '')),
+      hasVisibleOpeningRequest: rules.some((rule) => rule && /^visibleOpening/.test(rule.field || '')),
+      requestedFields: rules.map((rule) => ({
+        key: rule.field || '',
+        label: rule.label || '',
+        valueText: rule.value !== undefined && rule.value !== null ? `${rule.value}${rule.unit || 'mm'}` : '',
+        unit: rule.unit || 'mm'
+      })),
+      whiteBackground: metadata.whiteBackground === undefined
+        ? normalizeDimensionWhiteBackground(job)
+        : !!metadata.whiteBackground
+    },
+    dimensionBoxes: doorStructure.boxes || null,
+    anchors: doorStructure.dimensionAnchors || null,
+    keypoints: doorStructure.keypoints || null,
+    modes: doorStructure.modes || null,
+    confidence: doorStructure.confidence || null,
+    notes: doorStructure.notes || '',
+    bottomNotes: '',
+    rules: rules.map((rule) => ({
+      field: rule.field || '',
+      label: rule.label || '',
+      value: rule.value === undefined ? null : rule.value,
+      unit: rule.unit || 'mm',
+      type: rule.type || '',
+      orientation: rule.orientation || null,
+      sourceBoundary: rule.sourceBoundary || null,
+      confidence: rule.confidence || ''
+    })),
+    renderMetadata,
+    error: serializeWorkerError(error || (structuredResult && structuredResult.error)),
+    timestamps: {
+      startedAt: firstEvent && firstEvent.at ? firstEvent.at : null,
+      completedAt: lastEvent && lastEvent.at ? lastEvent.at : null,
+      durationMs: null
+    }
+  };
+}
+
 function mergeWorkerArtifacts(job, patch) {
   const current = job && job.workerArtifacts && typeof job.workerArtifacts === 'object'
     ? job.workerArtifacts
@@ -3934,6 +3998,10 @@ async function processDimensionAnnotationJobWithNewPipeline(jobId, job) {
   });
 
   const structuredResult = await runStructuredJob(structuredJob.jobId);
+  const structuredDimensionDebug = buildStructuredDimensionDebugArtifact({
+    job,
+    structuredResult
+  });
   if (structuredResult.status !== 'succeeded') {
     await updateJob(jobId, {
       status: 'failed',
@@ -3945,6 +4013,9 @@ async function processDimensionAnnotationJobWithNewPipeline(jobId, job) {
       structuredPipelineJobId: structuredJob.jobId,
       structuredPipelineStatus: structuredResult.status,
       structuredPipelineError: structuredResult.error || null,
+      workerArtifacts: mergeWorkerArtifacts(job, {
+        dimensionDebug: structuredDimensionDebug
+      }),
       needsManualReview: structuredResult.status === 'needs_user_adjustment',
       updatedAt: Date.now()
     });
@@ -3975,6 +4046,9 @@ async function processDimensionAnnotationJobWithNewPipeline(jobId, job) {
     structuredPipelineJobId: structuredJob.jobId,
     structuredPipelineStatus: structuredResult.status,
     structuredPipelineMetadata: structuredResult.metadata || {},
+    workerArtifacts: mergeWorkerArtifacts(job, {
+      dimensionDebug: structuredDimensionDebug
+    }),
     updatedAt: time,
     versions: nextVersions
   });
